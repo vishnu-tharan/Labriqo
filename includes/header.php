@@ -24,6 +24,7 @@ unset($_SESSION['notice']);
                 <a href="<?= $basePath . dashboardPath($user) ?>" <?= $pageTitle === 'Dashboard' ? 'aria-current="page"' : '' ?>>Dashboard</a>
                 <a href="<?= $basePath . $user['role'] ?>/equipment.php" <?= $pageTitle === 'Equipment' ? 'aria-current="page"' : '' ?>>Equipment</a>
                 <?php if ($user['role'] === 'student'): ?>
+                    <a href="<?= $basePath ?>student/requests.php" <?= $pageTitle === 'My requests' ? 'aria-current="page"' : '' ?>>My requests</a>
                     <a href="<?= $basePath ?>student/profile.php" <?= $pageTitle === 'My profile' ? 'aria-current="page"' : '' ?>>My profile</a>
                 <?php endif; ?>
                 <form action="<?= $basePath ?>logout.php" method="post">

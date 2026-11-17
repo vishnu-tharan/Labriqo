@@ -134,4 +134,22 @@ Copy the updated application files into `C:\xampp\htdocs\Labriqo` if you use Apa
 | Confirm removal of a new item with no requests | The item disappears from the inventory and catalog. |
 | Visit `staff/equipment.php` as a student | The server returns access denied (403). |
 
-The borrowing forms and loan workflow arrive in later phases. To test the loan safeguards now, use a separate test database with pending, borrowed, and returned request rows.
+## Phase 4 student borrowing
+
+Copy the latest application files into `C:\xampp\htdocs\Labriqo` if you use Apache. Sign in as a student, open **Equipment**, select an item, and submit the **Request equipment** form with a quantity, reason, and preferred borrowing date. Dates use the database server's local date.
+
+Open **My requests** to see pending requests, current loans, and borrowing history. The table shows issue, due, and return dates when they are recorded. Use **Cancel** on a pending request to cancel it.
+
+The equipment page checks the latest available stock before saving a pending request. It locks the item briefly so staff stock edits and removals cannot interrupt that check. The requests page cancels only a pending request belonging to the signed-in student. Submitting and cancelling keep the available quantity unchanged. Staff approval and returns are Phase 5.
+
+### Test student borrowing
+
+| Try | Expected result |
+| --- | --- |
+| Request two Digital Multimeters with a reason and today's date | **My requests** shows a pending request for two units. The catalog keeps the same available quantity. |
+| Request more units than are available, or use zero or a decimal | The form shows a quantity error. |
+| Omit the reason or use a past date | The form shows a validation error. |
+| Cancel a pending request and refresh | The request stays in history as **Cancelled**, and stock stays the same. |
+| Sign in as a different student | **My requests** shows only the signed-in student's records. |
+
+If the request form is missing, check the available quantity on the equipment page. If a request fails after the page has been open for a while, refresh to see the latest stock.

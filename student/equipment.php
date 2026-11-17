@@ -10,13 +10,26 @@ $database = db();
 $detailView = isset($_GET['id']);
 $item = false;
 $errors = [];
+$quantityInput = '1';
+$reason = '';
+$preferredDate = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$detailView) {
+        header('Allow: GET');
+        http_response_code(405);
+        exit('Open an equipment item to submit a request.');
+    }
+
+    checkCsrf();
+}
 
 if ($detailView) {
     $id = filter_var(queryValue('id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 
     if ($id !== false) {
         $statement = $database->prepare(
-            'SELECT e.*, c.name AS category_name
+            'SELECT e.*, c.name AS category_name, CURRENT_DATE() AS today
              FROM equipment e JOIN categories c ON e.category_id = c.id
              WHERE e.id = ? AND e.is_active = 1'
         );
@@ -26,6 +39,70 @@ if ($detailView) {
 
     if ($item === false) {
         http_response_code(404);
+    } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $quantityInput = trim(formValue('quantity'));
+        $reason = trim(formValue('reason'));
+        $preferredDate = formValue('preferred_date');
+        $quantity = filter_var($quantityInput, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+        if ($quantity === false) {
+            $errors[] = 'Enter a whole quantity of at least 1.';
+        }
+        if (!validText($reason, 1000)) {
+            $errors[] = 'Enter a borrowing reason of up to 1,000 characters.';
+        }
+        if (!validDate($preferredDate) || $preferredDate < $item['today']) {
+            $errors[] = 'Choose a preferred borrowing date of today or later.';
+        }
+
+        if ($errors === []) {
+            $database->beginTransaction();
+
+            try {
+                // Lock the same equipment row used by staff edits and removal.
+                $stock = $database->prepare(
+                    'SELECT total_quantity, available_quantity, CURRENT_DATE() AS today
+                     FROM equipment WHERE id = ? AND is_active = 1 FOR UPDATE'
+                );
+                $stock->execute([$id]);
+                $current = $stock->fetch();
+
+                if ($current === false) {
+                    $errors[] = 'This equipment is no longer in the catalog.';
+                    $item = false;
+                    http_response_code(404);
+                } else {
+                    $item['total_quantity'] = $current['total_quantity'];
+                    $item['available_quantity'] = $current['available_quantity'];
+                    $item['today'] = $current['today'];
+
+                    if ($quantity > $current['available_quantity']) {
+                        $errors[] = 'The requested quantity exceeds the available stock.';
+                    } elseif ($preferredDate < $current['today']) {
+                        $errors[] = 'Choose a preferred borrowing date of today or later.';
+                    }
+                }
+
+                if ($errors === []) {
+                    $request = $database->prepare(
+                        'INSERT INTO borrow_requests (user_id, equipment_id, quantity, reason, preferred_date)
+                         VALUES (?, ?, ?, ?, ?)'
+                    );
+                    $request->execute([$user['id'], $id, $quantity, $reason, $preferredDate]);
+                    $database->commit();
+
+                    $_SESSION['notice'] = 'Request submitted. It is pending staff review.';
+                    redirect('requests.php');
+                }
+
+                $database->rollBack();
+            } catch (Throwable $exception) {
+                if ($database->inTransaction()) {
+                    $database->rollBack();
+                }
+                throw $exception;
+            }
+        }
     }
 } else {
     $categories = $database->query('SELECT id, name FROM categories ORDER BY name')->fetchAll();
@@ -89,6 +166,35 @@ require __DIR__ . '/../includes/header.php';
                 <?php endif; ?>
             </div>
         </article>
+
+        <?php if ($item['available_quantity'] > 0): ?>
+            <section class="panel request-panel" aria-labelledby="request-title">
+                <h2 id="request-title">Request equipment</h2>
+                <form method="post" class="form-stack">
+                    <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
+
+                    <div class="form-grid">
+                        <div class="field">
+                            <label for="quantity">Quantity</label>
+                            <input id="quantity" name="quantity" type="number" min="1"
+                                   max="<?= (int) $item['available_quantity'] ?>"
+                                   value="<?= escape($quantityInput) ?>" required>
+                        </div>
+                        <div class="field">
+                            <label for="preferred-date">Preferred borrowing date</label>
+                            <input id="preferred-date" name="preferred_date" type="date"
+                                   min="<?= escape($item['today']) ?>"
+                                   value="<?= escape($preferredDate) ?>" required>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="reason">Borrowing reason</label>
+                        <textarea id="reason" name="reason" rows="3" maxlength="1000" required><?= escape($reason) ?></textarea>
+                    </div>
+                    <button class="button" type="submit">Submit request</button>
+                </form>
+            </section>
+        <?php endif; ?>
     <?php endif; ?>
 <?php else: ?>
     <div class="page-heading">

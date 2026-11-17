@@ -111,6 +111,16 @@ function validEmail(string $email): bool
     return strlen($email) <= 254 && filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
 }
 
+function validDate(string $date): bool
+{
+    if (preg_match('/\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/', $date) !== 1) {
+        return false;
+    }
+
+    [$year, $month, $day] = explode('-', $date);
+    return checkdate((int) $month, (int) $day, (int) $year);
+}
+
 function profileErrors(string $name, string $email, string $department): array
 {
     $errors = [];
