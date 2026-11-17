@@ -29,11 +29,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $statement = $database->prepare(
-    'SELECT r.id, r.equipment_id, r.quantity, r.status, DATE(r.request_date) AS requested_on,
-            r.preferred_date, r.issue_date, r.due_date, r.return_date, e.name, e.equipment_code, e.is_active
+    "SELECT r.id, r.equipment_id, r.quantity, r.status, DATE(r.request_date) AS requested_on,
+            r.preferred_date, r.issue_date, r.due_date, r.return_date, e.name, e.equipment_code, e.is_active,
+            (r.status = 'borrowed' AND r.due_date < CURRENT_DATE()) AS is_overdue
      FROM borrow_requests r JOIN equipment e ON r.equipment_id = e.id
      WHERE r.user_id = ?
-     ORDER BY r.request_date DESC, r.id DESC'
+     ORDER BY r.request_date DESC, r.id DESC"
 );
 $statement->execute([$user['id']]);
 $requests = $statement->fetchAll();
@@ -86,7 +87,13 @@ require __DIR__ . '/../includes/header.php';
                                 <div>Returned <time><?= escape($request['return_date']) ?></time></div>
                             <?php endif; ?>
                         </td>
-                        <td><span class="status status-<?= escape($request['status']) ?>"><?= escape(ucfirst($request['status'])) ?></span></td>
+                        <td>
+                            <?php if ($request['is_overdue']): ?>
+                                <span class="status status-overdue">Overdue</span>
+                            <?php else: ?>
+                                <span class="status status-<?= escape($request['status']) ?>"><?= escape(ucfirst($request['status'])) ?></span>
+                            <?php endif; ?>
+                        </td>
                         <td>
                             <?php if ($request['status'] === 'pending'): ?>
                                 <form method="post">

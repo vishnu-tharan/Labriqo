@@ -26,6 +26,9 @@ unset($_SESSION['notice']);
                 <?php if ($user['role'] === 'student'): ?>
                     <a href="<?= $basePath ?>student/requests.php" <?= $pageTitle === 'My requests' ? 'aria-current="page"' : '' ?>>My requests</a>
                     <a href="<?= $basePath ?>student/profile.php" <?= $pageTitle === 'My profile' ? 'aria-current="page"' : '' ?>>My profile</a>
+                <?php else: ?>
+                    <a href="<?= $basePath ?>staff/requests.php" <?= $pageTitle === 'Borrowing requests' ? 'aria-current="page"' : '' ?>>Requests</a>
+                    <a href="<?= $basePath ?>staff/returns.php" <?= $pageTitle === 'Returns' ? 'aria-current="page"' : '' ?>>Returns</a>
                 <?php endif; ?>
                 <form action="<?= $basePath ?>logout.php" method="post">
                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">

@@ -153,3 +153,26 @@ The equipment page checks the latest available stock before saving a pending req
 | Sign in as a different student | **My requests** shows only the signed-in student's records. |
 
 If the request form is missing, check the available quantity on the equipment page. If a request fails after the page has been open for a while, refresh to see the latest stock.
+
+## Phase 5 staff lending
+
+Copy the latest application files into `C:\xampp\htdocs\Labriqo` if you use Apache. Sign in as staff with the account created in Phase 2.
+
+1. Open **Requests**. Review the student, equipment, quantity, reason, and preferred date. Enter a due date and select **Approve and issue** when you hand over the equipment, or select **Reject** to close the request without issuing it.
+2. Open **Returns** when the student brings back the equipment. Find the loan, enter the full returned quantity, and select **Confirm return**.
+3. Choose **Overdue only** on the Returns page to find outstanding loans whose due date has passed. Use **View return history** or filter **Requests** by student ID, equipment, and status to find previous records.
+
+Approval and return each lock the equipment row before checking the request's current status. Each saves the stock change and the request update together in a database transaction. Rejection only changes a pending request's status. The database date determines the issue date, return date, and number of days overdue.
+
+### Test staff lending
+
+| Try | Expected result |
+| --- | --- |
+| Approve a pending request for two units with a valid due date | The request becomes **Borrowed**, issue and due dates appear, and stock falls by two. |
+| Reject a pending request | The request becomes **Rejected** and stock stays the same. |
+| Approve with a past due date, or compete for the last units from two staff sessions | A past date is rejected. Only the approval with enough stock succeeds. |
+| Enter fewer units than were issued, then enter the full quantity | The partial return is rejected. The full return becomes **Returned** and restores stock once. |
+| Check a loan due today and one due yesterday | Only yesterday's loan appears under **Overdue only**, with one day overdue. |
+| Try the staff pages as a student | The server returns access denied (403). |
+
+To test the overdue boundary immediately, set due dates in a separate test database with two active loans. If an approval reports insufficient stock, leave the request pending until equipment is available or reject it from **Requests**.

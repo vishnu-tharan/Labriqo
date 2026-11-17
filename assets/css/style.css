@@ -363,7 +363,8 @@ dd {
 }
 
 .status-unavailable,
-.status-rejected {
+.status-rejected,
+.status-overdue {
     background: #fce9eb;
     color: #842029;
 }
@@ -426,6 +427,21 @@ tbody tr:last-child > * {
 
 .button-danger:hover {
     background: #842029;
+}
+
+.loan-action {
+    display: grid;
+    min-width: 10rem;
+    gap: 0.45rem;
+}
+
+.request-reason {
+    margin: 0.45rem 0 0;
+    white-space: pre-line;
+}
+
+.overdue-note {
+    margin-top: 0.35rem;
 }
 
 @media (max-width: 36rem) {
