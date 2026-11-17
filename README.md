@@ -112,3 +112,26 @@ Sign in on the same page as students. The account's database role determines whi
 If Apache returns a 404, check the folder name under `htdocs` and the address in your browser. If Labriqo reports that it is temporarily unavailable, check that MySQL is running, the database is imported, and the connection test from Phase 1 succeeds.
 
 `includes/auth.php` starts the session and provides the role and form checks used by the pages. The session remembers the signed-in user's ID. Protected pages load that user's account and check its current role. Every form that changes state checks a token tied to the session before handling the submission. A successful sign-in renews the session ID, and signing out clears both the session and its cookie.
+
+## Phase 3 equipment
+
+Copy the updated application files into `C:\xampp\htdocs\Labriqo` if you use Apache. Start Apache and MySQL, then sign in and open **Equipment**. The equipment pages use the database and sample categories from Phase 1.
+
+- Students can search by name or equipment code, filter by category, and view stock, storage locations, and descriptions. Archived equipment is hidden from the student catalog.
+- Staff can add equipment, edit the details, set the category and total quantity, and remove items through a confirmation form. The image URL is optional. Accepted URLs use HTTP or HTTPS.
+- New equipment starts with all units available. An edit reads the latest stock before saving and keeps checked-out units accounted for. The database applies the new total and available stock together.
+- An item with a pending request or active loan stays in the inventory. Removing an item with past requests archives it to preserve the borrowing history. An item with no requests can be deleted.
+
+### Test equipment
+
+| Try | Expected result |
+| --- | --- |
+| Search for `tst-001` as a student and open its details | The Digital Multimeter appears with its description, location, and available quantity. |
+| Filter by **Networking** | The catalog shows equipment from that category. |
+| Add an item with a total quantity of 3 as staff | It appears in the inventory and student catalog with 3 available units. |
+| Try a duplicate code, missing category, or negative quantity | The form explains the error and leaves inventory unchanged. |
+| Set an item's total to 0 when all units are in stock | The catalog keeps the item and marks it **Unavailable**. |
+| Confirm removal of a new item with no requests | The item disappears from the inventory and catalog. |
+| Visit `staff/equipment.php` as a student | The server returns access denied (403). |
+
+The borrowing forms and loan workflow arrive in later phases. To test the loan safeguards now, use a separate test database with pending, borrowed, and returned request rows.

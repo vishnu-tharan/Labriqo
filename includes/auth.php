@@ -94,6 +94,12 @@ function formValue(string $field): string
     return is_string($value) ? $value : '';
 }
 
+function queryValue(string $field): string
+{
+    $value = $_GET[$field] ?? '';
+    return is_string($value) ? $value : '';
+}
+
 function validText(string $value, int $maxLength): bool
 {
     return $value !== '' && mb_check_encoding($value, 'UTF-8')

@@ -22,6 +22,7 @@ unset($_SESSION['notice']);
                 <a href="register.php" <?= $pageTitle === 'Student registration' ? 'aria-current="page"' : '' ?>>Register</a>
             <?php else: ?>
                 <a href="<?= $basePath . dashboardPath($user) ?>" <?= $pageTitle === 'Dashboard' ? 'aria-current="page"' : '' ?>>Dashboard</a>
+                <a href="<?= $basePath . $user['role'] ?>/equipment.php" <?= $pageTitle === 'Equipment' ? 'aria-current="page"' : '' ?>>Equipment</a>
                 <?php if ($user['role'] === 'student'): ?>
                     <a href="<?= $basePath ?>student/profile.php" <?= $pageTitle === 'My profile' ? 'aria-current="page"' : '' ?>>My profile</a>
                 <?php endif; ?>
