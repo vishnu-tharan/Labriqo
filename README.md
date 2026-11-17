@@ -176,3 +176,13 @@ Approval and return each lock the equipment row before checking the request's cu
 | Try the staff pages as a student | The server returns access denied (403). |
 
 To test the overdue boundary immediately, set due dates in a separate test database with two active loans. If an approval reports insufficient stock, leave the request pending until equipment is available or reject it from **Requests**.
+
+## Phase 6 dashboards
+
+Copy the latest application files into `C:\xampp\htdocs\Labriqo` if you use Apache. Sign in and open **Dashboard**.
+
+- The student dashboard counts equipment types in stock, pending requests, borrowed units, and overdue loans. Its recent activity table shows up to five records belonging to the signed-in student.
+- The staff dashboard counts active equipment types, total inventory units, borrowed units, pending requests, and overdue loans. Its recent returns table shows up to five completed returns, including equipment later archived.
+- Pending and overdue totals count records. The borrowed total counts physical units, so one loan for two items adds two borrowed units.
+
+To test the dashboards, submit a request and check that the pending count increases. Approve and issue it as staff, then check that pending decreases and borrowed units increase. Record the return and check that borrowed units decrease and the return appears on the staff dashboard. On a narrow screen, check that the cards reflow and the tables scroll inside their own area.
