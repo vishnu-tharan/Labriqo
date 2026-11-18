@@ -1,4 +1,9 @@
 <?php
+if (!isset($pageTitle)) {
+    http_response_code(404);
+    exit;
+}
+
 $basePath = $basePath ?? '';
 $notice = $_SESSION['notice'] ?? '';
 unset($_SESSION['notice']);

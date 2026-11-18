@@ -4,74 +4,31 @@
 
 Borrow Smart. Return on Time.
 
-Labriqo is a university lab inventory and lending project built with plain PHP and MySQL. Students will request equipment, and lab staff will manage inventory, issue equipment, and record returns.
+Labriqo replaces a university laboratory's paper borrowing register. Students can find equipment, check stock, and request a loan. Staff manage the inventory, issue equipment, confirm returns, and track overdue loans.
 
-## Phase 1 setup
+## Run with XAMPP on Windows
 
-Labriqo uses four database tables, sample inventory, and a shared PHP connection. Use XAMPP for Windows with PHP 8 and the `pdo_mysql` and `mbstring` extensions. XAMPP labels its database service **MySQL**, and the bundled database is MariaDB. If you use standalone MySQL, use 8.0.16 or later so that it enforces the stock constraints.
+Use XAMPP with Apache, PHP 8, and the `pdo_mysql` and `mbstring` extensions. XAMPP's **MySQL** service runs MariaDB. If you use standalone MySQL, use 8.0.16 or later so it enforces the stock constraints.
 
-1. Open the **XAMPP Control Panel** and start **Apache** and **MySQL**.
-2. Open [phpMyAdmin](http://localhost/phpmyadmin/) and select **Import** from its home page.
-3. Choose `database.sql` from the Labriqo folder and select **Import**. The script creates and selects the `labriqo` database.
-4. Select `labriqo` in the sidebar. Check that it contains `users`, `categories`, `equipment`, and `borrow_requests`. Open `equipment` and select **Browse** to see five sample items.
-
-[XAMPP for Windows documentation](https://www.apachefriends.org/faq_windows) · [MySQL stock constraint support](https://dev.mysql.com/doc/refman/8.0/en/create-table-check-constraints.html)
-
-### Verify PHP can connect
-
-Open PowerShell in the Labriqo project folder and run the following. Adjust the path to `php.exe` if XAMPP is installed elsewhere.
+1. Download the repository or clone it with `git clone https://github.com/vishnu-tharan/Labriqo.git`.
+2. In the **XAMPP Control Panel**, start **Apache** and **MySQL**.
+3. Open [phpMyAdmin](http://localhost/phpmyadmin/) and select **Import** from its home page. Choose `database.sql` from the repository and run the import. The script creates the `labriqo` database and seeds five equipment types across three categories, with 42 units available.
+4. Open PowerShell in the repository folder. Run the commands below to place the app under Apache's document root. Adjust the path if XAMPP is installed elsewhere.
 
 ```powershell
-@'
-<?php
-require 'config/db.php';
-$equipmentCount = db()->query('SELECT COUNT(*) FROM equipment')->fetchColumn();
-echo "Database connected. Equipment types: {$equipmentCount}", PHP_EOL;
-'@ | & 'C:\xampp\php\php.exe'
+$labriqoSite = 'C:\xampp\htdocs\Labriqo'
+New-Item -ItemType Directory -Path $labriqoSite -Force | Out-Null
+Copy-Item -LiteralPath assets,config,includes,staff,student,index.php,login.php,logout.php,register.php `
+    -Destination $labriqoSite -Recurse -Force
 ```
 
-A fresh import prints `Database connected. Equipment types: 5`. The sample inventory contains 42 physical units, with all 42 initially available.
+5. Open [Labriqo](http://localhost/Labriqo/) and select **Register** to create a student account.
 
-`db()` opens the PDO connection on first use and reuses it for the rest of that page request. It selects UTF-8, uses native prepared statements, and reports database errors as exceptions.
+[XAMPP for Windows documentation](https://www.apachefriends.org/faq_windows) · [MySQL constraint support](https://dev.mysql.com/doc/refman/8.0/en/create-table-check-constraints.html)
 
-### Troubleshooting
+### Create the first staff account
 
-| Error | What to check |
-| --- | --- |
-| Connection refused | Start **MySQL** in XAMPP. If it uses a custom port, set the `LABRIQO_DB_PORT` environment variable in the environment running PHP. |
-| Unknown database `labriqo` | Import `database.sql` into the same database server PHP connects to. |
-| Access denied | The connection uses XAMPP's usual local `root` account. If you configured a different user, update `$username`. If your database account has a password, provide it through the `LABRIQO_DB_PASSWORD` environment variable in the environment running PHP. |
-| Could not find driver | Run `C:\xampp\php\php.exe -m` and check for `pdo_mysql`. Enable that extension in the active `php.ini` if it is missing. Restart Apache if changing its PHP configuration. |
-
-## Database relationships
-
-- A category can contain many equipment entries. Every equipment entry belongs to one category.
-- A student can submit many borrowing requests. Each request belongs to one user and refers to one equipment entry. The application will check that the requester is a signed-in student.
-- Foreign keys protect request history. Equipment with past requests can be archived using `is_active`.
-- The database enforces unique emails, student IDs, and equipment codes, along with valid stock counts and positive request quantities.
-
-## Phase 2 authentication
-
-Phase 2 uses the database from Phase 1.
-
-1. Create `C:\xampp\htdocs\Labriqo`.
-2. Copy `assets`, `config`, `includes`, `student`, `staff`, and the four root PHP files into that folder.
-3. With Apache and MySQL running, open [Labriqo](http://localhost/Labriqo/) and choose **Register** to create a student account.
-4. Sign in. The student dashboard links to **My profile**, where you can change your name, email, and department. Use the updated email on your next sign-in.
-
-To run the app from the project folder without copying files, leave MySQL running and use the PHP development server.
-
-```powershell
-& 'C:\xampp\php\php.exe' -S 127.0.0.1:8000
-```
-
-Open [Labriqo on the development server](http://127.0.0.1:8000/). Press **Ctrl+C** in PowerShell to stop the development server.
-
-### Set up a staff account
-
-Create staff accounts through the database. Public registration always creates student accounts.
-
-In PowerShell, run the following and enter a password of at least 8 characters and at most 72 bytes. Copy the hash printed by PHP.
+Public registration creates student accounts. Use PowerShell to generate a hash for the staff password. Enter at least 8 characters and at most 72 bytes.
 
 ```powershell
 $staffPassword = Read-Host 'Staff password' -AsSecureString
@@ -81,7 +38,8 @@ try {
 <?php
 $password = (string) getenv('LABRIQO_STAFF_PASSWORD');
 if (mb_strlen($password, 'UTF-8') < 8 || strlen($password) > 72) {
-    exit("Use at least 8 characters and at most 72 bytes." . PHP_EOL);
+    echo 'Use at least 8 characters and at most 72 bytes.', PHP_EOL;
+    exit(1);
 }
 echo password_hash($password, PASSWORD_DEFAULT), PHP_EOL;
 '@ | & 'C:\xampp\php\php.exe'
@@ -90,99 +48,67 @@ echo password_hash($password, PASSWORD_DEFAULT), PHP_EOL;
 }
 ```
 
-In phpMyAdmin, choose **labriqo**, open the **SQL** tab, and run the insert below. Replace the example name, email, department, and hash with the staff member's details and the copied hash.
+In phpMyAdmin, select **labriqo** and open the **SQL** tab. Replace the example name, email, and department with the staff member's details. Replace `PASTE_HASH_HERE` with the password hash printed above.
 
 ```sql
 INSERT INTO users (name, email, password, department, role)
 VALUES ('Lab Staff', 'staff@example.edu', 'PASTE_HASH_HERE', 'Engineering', 'staff');
 ```
 
-Sign in on the same page as students. The account's database role determines which dashboard opens.
+Sign in using that email and the original password. The account opens the staff dashboard.
 
-### Test authentication
+### Troubleshooting
 
-| Try | Expected result |
+| Symptom | What to check |
 | --- | --- |
-| Register two students with the same email or student ID | The second registration shows a duplicate-account error. |
-| Submit mismatched passwords or sign in with the wrong password | The form shows an error and keeps you signed out. |
-| Visit `staff/dashboard.php` as a student, or `student/profile.php` as staff | The server returns access denied (403). |
-| Change your student profile and reload the page | The updated details are saved. An email already in use is rejected. |
-| Sign out and try reopening either dashboard | The dashboard sends you back to sign-in. |
+| Page returns 404 | Check that `index.php` is inside `C:\xampp\htdocs\Labriqo`. If Apache uses a custom port, include it in the URL. |
+| Labriqo is temporarily unavailable | Check that MySQL is running and `labriqo` is visible in phpMyAdmin. Review the PHP error log for the underlying error. |
+| Database connection refused or access denied | `config/db.php` defaults to the local `root` account and port `3306`. Set `LABRIQO_DB_PORT` or `LABRIQO_DB_PASSWORD` in the environment running PHP if your settings differ. Edit `$username` in `config/db.php` for a different account. |
+| PHP reports a missing extension | Run `C:\xampp\php\php.exe -m` to check for `pdo_mysql` and `mbstring`. Enable the missing extension in XAMPP's `php.ini` and restart Apache. |
 
-If Apache returns a 404, check the folder name under `htdocs` and the address in your browser. If Labriqo reports that it is temporarily unavailable, check that MySQL is running, the database is imported, and the connection test from Phase 1 succeeds.
+## Borrow and return equipment
 
-`includes/auth.php` starts the session and provides the role and form checks used by the pages. The session remembers the signed-in user's ID. Protected pages load that user's account and check its current role. Every form that changes state checks a token tied to the session before handling the submission. A successful sign-in renews the session ID, and signing out clears both the session and its cookie.
+1. **Student** · Open **Equipment**. Search by name or code, filter by category, and open an item. Enter a quantity, preferred date, and reason, then submit. **My requests** shows pending requests, active loans, and history. A student can cancel their own pending requests.
+2. **Staff** · Open **Requests**. Review the student and equipment details. Enter a return due date and select **Approve and issue** when handing over the equipment, or choose **Reject**.
+3. **Staff** · Open **Returns** when equipment comes back. Enter the full returned quantity and select **Confirm return**. Use **Overdue only** to find outstanding loans past their due date. Use **View return history** to find completed returns.
 
-## Phase 3 equipment
+Staff use **Equipment** to add, edit, or remove inventory. Quantity edits account for checked-out units. Pending requests and active loans block removal. Equipment with completed history is archived and stays in borrowing records.
 
-Copy the updated application files into `C:\xampp\htdocs\Labriqo` if you use Apache. Start Apache and MySQL, then sign in and open **Equipment**. The equipment pages use the database and sample categories from Phase 1.
+The student dashboard shows equipment types in stock and the student's own requests and loans. The staff dashboard shows active inventory totals and recent returns. Pending and overdue totals count records. Borrowed totals count units.
 
-- Students can search by name or equipment code, filter by category, and view stock, storage locations, and descriptions. Archived equipment is hidden from the student catalog.
-- Staff can add equipment, edit the details, set the category and total quantity, and remove items through a confirmation form. The image URL is optional. Accepted URLs use HTTP or HTTPS.
-- New equipment starts with all units available. An edit reads the latest stock before saving and keeps checked-out units accounted for. The database applies the new total and available stock together.
-- An item with a pending request or active loan stays in the inventory. Removing an item with past requests archives it to preserve the borrowing history. An item with no requests can be deleted.
+## Code and database
 
-### Test equipment
-
-| Try | Expected result |
+| Location | Purpose |
 | --- | --- |
-| Search for `tst-001` as a student and open its details | The Digital Multimeter appears with its description, location, and available quantity. |
-| Filter by **Networking** | The catalog shows equipment from that category. |
-| Add an item with a total quantity of 3 as staff | It appears in the inventory and student catalog with 3 available units. |
-| Try a duplicate code, missing category, or negative quantity | The form explains the error and leaves inventory unchanged. |
-| Set an item's total to 0 when all units are in stock | The catalog keeps the item and marks it **Unavailable**. |
-| Confirm removal of a new item with no requests | The item disappears from the inventory and catalog. |
-| Visit `staff/equipment.php` as a student | The server returns access denied (403). |
+| Root PHP pages | Entry point, sign-in, student registration, and sign-out |
+| `student/` and `staff/` | Pages for each role, including dashboards |
+| `includes/` | Shared page layout, sessions, form tokens, and access checks |
+| `config/db.php` | Reusable PDO connection with prepared statements |
+| `assets/css/style.css` | Shared responsive layout and styles |
+| `database.sql` | Schema and sample inventory |
 
-## Phase 4 student borrowing
+`users` stores students and staff with unique emails and hashed passwords. `categories` groups equipment. Each `borrow_requests` row links a user to an equipment record and keeps its status and dates. Foreign keys preserve the links used by history.
 
-Copy the latest application files into `C:\xampp\htdocs\Labriqo` if you use Apache. Sign in as a student, open **Equipment**, select an item, and submit the **Request equipment** form with a quantity, reason, and preferred borrowing date. Dates use the database server's local date.
+Submitting, cancelling, and rejecting a request leave stock unchanged. Approval and return lock the equipment row and update stock and request status in a single transaction. Due dates and overdue counts use the database server's date.
 
-Open **My requests** to see pending requests, current loans, and borrowing history. The table shows issue, due, and return dates when they are recorded. Use **Cancel** on a pending request to cancel it.
+## Test the project
 
-The equipment page checks the latest available stock before saving a pending request. It locks the item briefly so staff stock edits and removals cannot interrupt that check. The requests page cancels only a pending request belonging to the signed-in student. Submitting and cancelling keep the available quantity unchanged. Staff approval and returns are Phase 5.
+Start with the sample inventory in a fresh local database. Use separate browser sessions for staff and students.
 
-### Test student borrowing
-
-| Try | Expected result |
+| Test | Expected result |
 | --- | --- |
-| Request two Digital Multimeters with a reason and today's date | **My requests** shows a pending request for two units. The catalog keeps the same available quantity. |
-| Request more units than are available, or use zero or a decimal | The form shows a quantity error. |
-| Omit the reason or use a past date | The form shows a validation error. |
-| Cancel a pending request and refresh | The request stays in history as **Cancelled**, and stock stays the same. |
-| Sign in as a different student | **My requests** shows only the signed-in student's records. |
+| Register a student, then try the same email or student ID again | Registration rejects the duplicate. The student can sign in and edit their profile. |
+| Try a staff page while signed in as a student, then sign out and reopen the student dashboard | The staff page denies access. The student dashboard asks you to sign in again. |
+| Search for `TST-001`, then filter by Test Instruments | The Digital Multimeter appears with eight available units on a fresh import. |
+| Add equipment as staff, then try a duplicate code or negative quantity | Valid equipment appears in the catalog. Invalid changes show an error. |
+| Request two multimeters | The request is **Pending** and eight units remain available. |
+| Set an item to one available unit and request three, or enter a past preferred date | The request is rejected. |
+| Cancel or reject a pending request | Its status changes, and the available quantity stays the same. |
+| Approve and issue the request for two multimeters | It becomes **Borrowed**, its due date appears, and available stock falls from eight to six. |
+| Submit two requests for four units of a five-unit item, then approve from two staff sessions | Only one issues equipment. The other stays pending and one unit remains available. |
+| Verify a loan due today and one due yesterday in the overdue view | Only the outstanding loan due yesterday is overdue. The view shows one day overdue. |
+| Enter one unit for a two-unit loan, then confirm with two | The partial return is rejected. The full return restores stock, changes the status to **Returned**, and appears in history. A repeat submission leaves stock unchanged. |
+| Remove equipment with past requests after all active loans and pending requests are resolved | Staff see it as **Archived**. It is hidden from the student catalog, and its records are still in history. |
+| Open both dashboards and a request table on a narrow screen | Cards reflow and wide tables scroll inside their own area. |
 
-If the request form is missing, check the available quantity on the equipment page. If a request fails after the page has been open for a while, refresh to see the latest stock.
-
-## Phase 5 staff lending
-
-Copy the latest application files into `C:\xampp\htdocs\Labriqo` if you use Apache. Sign in as staff with the account created in Phase 2.
-
-1. Open **Requests**. Review the student, equipment, quantity, reason, and preferred date. Enter a due date and select **Approve and issue** when you hand over the equipment, or select **Reject** to close the request without issuing it.
-2. Open **Returns** when the student brings back the equipment. Find the loan, enter the full returned quantity, and select **Confirm return**.
-3. Choose **Overdue only** on the Returns page to find outstanding loans whose due date has passed. Use **View return history** or filter **Requests** by student ID, equipment, and status to find previous records.
-
-Approval and return each lock the equipment row before checking the request's current status. Each saves the stock change and the request update together in a database transaction. Rejection only changes a pending request's status. The database date determines the issue date, return date, and number of days overdue.
-
-### Test staff lending
-
-| Try | Expected result |
-| --- | --- |
-| Approve a pending request for two units with a valid due date | The request becomes **Borrowed**, issue and due dates appear, and stock falls by two. |
-| Reject a pending request | The request becomes **Rejected** and stock stays the same. |
-| Approve with a past due date, or compete for the last units from two staff sessions | A past date is rejected. Only the approval with enough stock succeeds. |
-| Enter fewer units than were issued, then enter the full quantity | The partial return is rejected. The full return becomes **Returned** and restores stock once. |
-| Check a loan due today and one due yesterday | Only yesterday's loan appears under **Overdue only**, with one day overdue. |
-| Try the staff pages as a student | The server returns access denied (403). |
-
-To test the overdue boundary immediately, set due dates in a separate test database with two active loans. If an approval reports insufficient stock, leave the request pending until equipment is available or reject it from **Requests**.
-
-## Phase 6 dashboards
-
-Copy the latest application files into `C:\xampp\htdocs\Labriqo` if you use Apache. Sign in and open **Dashboard**.
-
-- The student dashboard counts equipment types in stock, pending requests, borrowed units, and overdue loans. Its recent activity table shows up to five records belonging to the signed-in student.
-- The staff dashboard counts active equipment types, total inventory units, borrowed units, pending requests, and overdue loans. Its recent returns table shows up to five completed returns, including equipment later archived.
-- Pending and overdue totals count records. The borrowed total counts physical units, so one loan for two items adds two borrowed units.
-
-To test the dashboards, submit a request and check that the pending count increases. Approve and issue it as staff, then check that pending decreases and borrowed units increase. Record the return and check that borrowed units decrease and the return appears on the staff dashboard. On a narrow screen, check that the cards reflow and the tables scroll inside their own area.
+To demonstrate the overdue case immediately, use phpMyAdmin in a disposable test database after issuing a loan. Set its `issue_date` to two days ago and its `due_date` to yesterday. Leave another active loan due today for comparison.
