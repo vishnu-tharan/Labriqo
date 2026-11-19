@@ -17,9 +17,9 @@ function saveEquipment(PDO $database, array $fields, ?int $id): void
     if ($id === null) {
         $statement = $database->prepare(
             'INSERT INTO equipment
-                (equipment_code, name, category_id, description, total_quantity, available_quantity, location, image_url)
+                (equipment_code, name, category_id, description, total_quantity, available_quantity, location, image_url, is_under_maintenance)
              VALUES
-                (:equipment_code, :name, :category_id, :description, :total_quantity, :available_quantity, :location, :image_url)'
+                (:equipment_code, :name, :category_id, :description, :total_quantity, :available_quantity, :location, :image_url, :is_under_maintenance)'
         );
         $statement->execute($fields);
         return;
@@ -43,7 +43,7 @@ function saveEquipment(PDO $database, array $fields, ?int $id): void
         'UPDATE equipment
          SET equipment_code = :equipment_code, name = :name, category_id = :category_id,
              description = :description, total_quantity = :total_quantity, available_quantity = :available_quantity,
-             location = :location, image_url = :image_url
+             location = :location, image_url = :image_url, is_under_maintenance = :is_under_maintenance
          WHERE id = :id'
     );
     $statement->execute($fields);
@@ -157,6 +157,7 @@ $fields = [
     'total_quantity' => '',
     'location' => '',
     'image_url' => '',
+    'is_under_maintenance' => '0',
 ];
 
 if ($mode === 'edit') {
@@ -177,6 +178,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
     if ($mode !== 'remove') {
         foreach ($fields as $field => $value) {
             $fields[$field] = trim(formValue($field));
+        }
+
+        if ($fields['is_under_maintenance'] === '') {
+            $fields['is_under_maintenance'] = '0';
+        }
+        if (!in_array($fields['is_under_maintenance'], ['0', '1'], true)) {
+            $errors[] = 'Choose a valid maintenance status.';
         }
 
         $categoryId = filter_var($fields['category_id'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -280,6 +288,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $mode === 'list'
         'available_quantity' => 'Available quantity',
         'location' => 'Storage location',
         'image_url' => 'Image URL',
+        'is_under_maintenance' => 'Under maintenance (1=yes, 0=no)',
         'is_active' => 'Active (1=yes, 0=archived)',
     ], $equipment);
 }
@@ -338,6 +347,9 @@ require __DIR__ . '/../includes/header.php';
                             <th scope="row">
                                 <?= escape($row['name']) ?>
                                 <small class="table-note"><?= escape($row['equipment_code']) ?></small>
+                                <?php if ($row['is_under_maintenance']): ?>
+                                    <span class="status status-maintenance">Under maintenance</span>
+                                <?php endif; ?>
                             </th>
                             <td><?= escape($row['category_name']) ?></td>
                             <td><?= escape($row['location']) ?></td>
@@ -457,6 +469,14 @@ require __DIR__ . '/../includes/header.php';
             <div class="field">
                 <label for="description">Description</label>
                 <textarea id="description" name="description" rows="4" maxlength="2000" required><?= escape($fields['description']) ?></textarea>
+            </div>
+            <div class="field">
+                <label for="maintenance">Equipment status</label>
+                <select id="maintenance" name="is_under_maintenance" required>
+                    <option value="0" <?= $fields['is_under_maintenance'] === '0' ? 'selected' : '' ?>>Ready for lending</option>
+                    <option value="1" <?= $fields['is_under_maintenance'] === '1' ? 'selected' : '' ?>>Under maintenance</option>
+                </select>
+                <small>Maintenance pauses new requests and issues for this equipment type.</small>
             </div>
             <div class="field">
                 <label for="image-url">Image URL (optional)</label>

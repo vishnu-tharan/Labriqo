@@ -4,21 +4,29 @@ require_once __DIR__ . '/../includes/auth.php';
 
 function approveRequest(PDO $database, int $requestId, string $dueDate): void
 {
-    $lookup = $database->prepare('SELECT equipment_id FROM borrow_requests WHERE id = ?');
+    $lookup = $database->prepare('SELECT equipment_id, user_id FROM borrow_requests WHERE id = ?');
     $lookup->execute([$requestId]);
-    $equipmentId = $lookup->fetchColumn();
+    $requestOwner = $lookup->fetch();
 
-    if ($equipmentId === false) {
+    if ($requestOwner === false) {
         throw new DomainException('Only pending requests can be approved.');
     }
 
+    $equipmentId = $requestOwner['equipment_id'];
     $database->beginTransaction();
 
     try {
         // Lock equipment first so approvals, returns, and inventory edits use the same order.
-        $stock = $database->prepare('SELECT available_quantity, is_active FROM equipment WHERE id = ? FOR UPDATE');
+        $stock = $database->prepare('SELECT available_quantity, is_active, is_under_maintenance FROM equipment WHERE id = ? FOR UPDATE');
         $stock->execute([$equipmentId]);
         $item = $stock->fetch();
+
+        // Serialize approvals for one student, even when they borrow different equipment.
+        $student = $database->prepare("SELECT id FROM users WHERE id = ? AND role = 'student' FOR UPDATE");
+        $student->execute([$requestOwner['user_id']]);
+        if ($student->fetchColumn() === false) {
+            throw new DomainException('The request must belong to a student.');
+        }
 
         $pending = $database->prepare(
             "SELECT quantity, CURRENT_DATE() AS today FROM borrow_requests
@@ -32,6 +40,12 @@ function approveRequest(PDO $database, int $requestId, string $dueDate): void
         }
         if ($item === false || !$item['is_active']) {
             throw new DomainException('This equipment is no longer active.');
+        }
+        if ($item['is_under_maintenance']) {
+            throw new DomainException('This equipment is under maintenance.');
+        }
+        if ($request['quantity'] + borrowedUnits($database, $requestOwner['user_id']) > MAX_BORROWED_UNITS) {
+            throw new DomainException('This issue exceeds the student borrowing limit of ' . MAX_BORROWED_UNITS . ' units.');
         }
         if ($dueDate < $request['today']) {
             throw new DomainException('Choose a return due date of today or later.');
@@ -62,6 +76,14 @@ $user = requireRole('staff');
 $basePath = '../';
 $pageTitle = 'Borrowing requests';
 $database = db();
+
+if (isset($_GET['slip'])) {
+    $borrowingSlip = getBorrowingSlip($database, $user, queryValue('slip'));
+    $pageTitle = 'Borrowing slip';
+    require __DIR__ . '/../includes/header.php';
+    require __DIR__ . '/../includes/footer.php';
+    exit;
+}
 $errors = [];
 $requestId = false;
 $dueDate = '';
@@ -132,7 +154,7 @@ if ($studentId !== '' && !validText($studentId, 30)) {
         "SELECT r.id, r.status, r.quantity, r.reason, DATE(r.request_date) AS requested_on,
                 r.preferred_date, r.approval_date, r.issue_date, r.due_date, r.return_date, r.rejection_reason,
                 u.name AS student_name, u.student_id, u.department, u.email,
-                e.name AS equipment_name, e.equipment_code, e.available_quantity
+                e.name AS equipment_name, e.equipment_code, e.available_quantity, e.is_under_maintenance
          FROM borrow_requests r
          JOIN users u ON r.user_id = u.id
          JOIN equipment e ON r.equipment_id = e.id
@@ -256,6 +278,9 @@ require __DIR__ . '/../includes/header.php';
                                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
                                     <input type="hidden" name="request_id" value="<?= (int) $request['id'] ?>">
                                     <small><?= (int) $request['available_quantity'] ?> available</small>
+                                    <?php if ($request['is_under_maintenance']): ?>
+                                        <span class="status status-maintenance">Under maintenance</span>
+                                    <?php endif; ?>
                                     <label for="due-<?= (int) $request['id'] ?>">Return due date</label>
                                     <input id="due-<?= (int) $request['id'] ?>" name="due_date" type="date"
                                            min="<?= escape($today) ?>" required
@@ -270,6 +295,8 @@ require __DIR__ . '/../includes/header.php';
                                               rows="3" maxlength="1000" required><?= (int) $request['id'] === $requestId ? escape($rejectionReason) : '' ?></textarea>
                                     <button class="button button-danger" type="submit" name="decision" value="reject">Reject request</button>
                                 </form>
+                            <?php elseif (in_array($request['status'], ['borrowed', 'returned'], true)): ?>
+                                <a href="requests.php?slip=<?= (int) $request['id'] ?>">Borrowing slip</a>
                             <?php else: ?>
                                 &mdash;
                             <?php endif; ?>

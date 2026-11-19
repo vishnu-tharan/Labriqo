@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS equipment (
     location VARCHAR(120) NOT NULL,
     image_url VARCHAR(2048),
     is_active TINYINT(1) NOT NULL DEFAULT 1,
+    is_under_maintenance TINYINT(1) NOT NULL DEFAULT 0,
+    CONSTRAINT equipment_maintenance_value CHECK (is_under_maintenance IN (0, 1)),
     CONSTRAINT equipment_category_fk FOREIGN KEY (category_id) REFERENCES categories (id),
     CONSTRAINT equipment_stock_range
         CHECK (total_quantity >= 0 AND available_quantity BETWEEN 0 AND total_quantity),

@@ -16,7 +16,7 @@ unset($_SESSION['notice']);
     <title><?= escape($pageTitle) ?> | Labriqo</title>
     <link rel="stylesheet" href="<?= $basePath ?>assets/css/style.css">
 </head>
-<body>
+<body<?= isset($borrowingSlip) ? ' class="slip-page"' : '' ?>>
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
     <div class="container header-row">

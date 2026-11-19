@@ -234,3 +234,36 @@ function paginate(PDO $database, PDOStatement $statement, array $parameters, boo
 
     return ['records' => $limited->fetchAll(), 'page' => $page, 'pages' => $pages];
 }
+
+
+function borrowedUnits(PDO $database, int $studentId): int
+{
+    $statement = $database->prepare(
+        "SELECT COALESCE(SUM(quantity), 0) FROM borrow_requests WHERE user_id = ? AND status = 'borrowed'"
+    );
+    $statement->execute([$studentId]);
+    return (int) $statement->fetchColumn();
+}
+
+function getBorrowingSlip(PDO $database, array $user, string $requestId): array
+{
+    $id = filter_var($requestId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    $statement = $database->prepare(
+        "SELECT r.id, r.quantity, r.reason, r.status, r.issue_date, r.due_date, r.return_date,
+                u.name AS student_name, u.student_id, u.department, u.email,
+                e.name AS equipment_name, e.equipment_code
+         FROM borrow_requests r
+         JOIN users u ON r.user_id = u.id
+         JOIN equipment e ON r.equipment_id = e.id
+         WHERE r.id = ? AND r.status IN ('borrowed', 'returned') AND (? = 'staff' OR r.user_id = ?)"
+    );
+    $statement->execute([$id === false ? 0 : $id, $user['role'], $user['id']]);
+    $slip = $statement->fetch();
+
+    if ($slip === false) {
+        http_response_code(404);
+        exit('This borrowing slip is unavailable.');
+    }
+
+    return $slip;
+}

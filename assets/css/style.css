@@ -536,3 +536,41 @@ tbody tr:last-child > * {
     gap: 1rem;
     margin-top: 1.5rem;
 }
+
+.status-maintenance {
+    background: #fff1cf;
+    color: #704600;
+}
+
+.borrowing-slip h2 {
+    margin-top: 1.5rem;
+}
+
+@media print {
+    .slip-page .site-header,
+    .slip-page .site-footer,
+    .slip-page .skip-link,
+    .slip-page .slip-tools {
+        display: none;
+    }
+
+    body.slip-page {
+        display: block;
+        background: white;
+        color: black;
+    }
+
+    .slip-page main.container {
+        width: 100%;
+        padding: 0;
+    }
+
+    .borrowing-slip {
+        border: 0;
+        padding: 0;
+    }
+
+    .borrowing-slip .details {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

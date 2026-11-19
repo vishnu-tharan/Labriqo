@@ -8,7 +8,7 @@ $pageTitle = 'Dashboard';
 $database = db();
 
 $availableTypes = $database->query(
-    'SELECT COUNT(*) FROM equipment WHERE is_active = 1 AND available_quantity > 0'
+    'SELECT COUNT(*) FROM equipment WHERE is_active = 1 AND is_under_maintenance = 0 AND available_quantity > 0'
 )->fetchColumn();
 
 $statement = $database->prepare(

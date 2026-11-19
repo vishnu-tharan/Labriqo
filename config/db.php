@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+// Maximum physical units a student may hold across active loans.
+const MAX_BORROWED_UNITS = 5;
+
 function db(): PDO
 {
     static $connection = null;

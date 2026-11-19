@@ -6,6 +6,14 @@ $user = requireRole('student');
 $basePath = '../';
 $pageTitle = 'My requests';
 $database = db();
+
+if (isset($_GET['slip'])) {
+    $borrowingSlip = getBorrowingSlip($database, $user, queryValue('slip'));
+    $pageTitle = 'Borrowing slip';
+    require __DIR__ . '/../includes/header.php';
+    require __DIR__ . '/../includes/footer.php';
+    exit;
+}
 $errors = [];
 
 $statusOptions = [
@@ -165,6 +173,8 @@ require __DIR__ . '/../includes/header.php';
                                     <button class="button button-danger" type="submit"
                                             aria-label="Cancel request <?= (int) $request['id'] ?>">Cancel</button>
                                 </form>
+                            <?php elseif (in_array($request['status'], ['borrowed', 'returned'], true)): ?>
+                                <a href="requests.php?slip=<?= (int) $request['id'] ?>">Borrowing slip</a>
                             <?php else: ?>
                                 &mdash;
                             <?php endif; ?>

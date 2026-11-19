@@ -13,6 +13,7 @@ $errors = [];
 $quantityInput = '1';
 $reason = '';
 $preferredDate = '';
+$currentBorrowedUnits = borrowedUnits($database, $user['id']);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$detailView) {
@@ -61,7 +62,7 @@ if ($detailView) {
             try {
                 // Lock the same equipment row used by staff edits and removal.
                 $stock = $database->prepare(
-                    'SELECT total_quantity, available_quantity, CURRENT_DATE() AS today
+                    'SELECT total_quantity, available_quantity, is_under_maintenance, CURRENT_DATE() AS today
                      FROM equipment WHERE id = ? AND is_active = 1 FOR UPDATE'
                 );
                 $stock->execute([$id]);
@@ -76,7 +77,12 @@ if ($detailView) {
                     $item['available_quantity'] = $current['available_quantity'];
                     $item['today'] = $current['today'];
 
-                    if ($quantity > $current['available_quantity']) {
+                    $item['is_under_maintenance'] = $current['is_under_maintenance'];
+                    if ($current['is_under_maintenance']) {
+                        $errors[] = 'This equipment is under maintenance.';
+                    } elseif ($quantity + borrowedUnits($database, $user['id']) > MAX_BORROWED_UNITS) {
+                        $errors[] = 'This request exceeds the student borrowing limit of ' . MAX_BORROWED_UNITS . ' units.';
+                    } elseif ($quantity > $current['available_quantity']) {
                         $errors[] = 'The requested quantity exceeds the available stock.';
                     } elseif ($preferredDate < $current['today']) {
                         $errors[] = 'Choose a preferred borrowing date of today or later.';
@@ -159,7 +165,9 @@ require __DIR__ . '/../includes/header.php';
                         <dd><?= escape($item['location']) ?></dd>
                     </div>
                 </dl>
-                <?php if ($item['available_quantity'] > 0): ?>
+                <?php if ($item['is_under_maintenance']): ?>
+                    <span class="status status-maintenance">Under maintenance</span>
+                <?php elseif ($item['available_quantity'] > 0): ?>
                     <span class="status status-available">Available</span>
                 <?php else: ?>
                     <span class="status status-unavailable">Unavailable</span>
@@ -167,9 +175,10 @@ require __DIR__ . '/../includes/header.php';
             </div>
         </article>
 
-        <?php if ($item['available_quantity'] > 0): ?>
+        <?php if (!$item['is_under_maintenance'] && $item['available_quantity'] > 0): ?>
             <section class="panel request-panel" aria-labelledby="request-title">
                 <h2 id="request-title">Request equipment</h2>
+                <p>You currently hold <?= (int) $currentBorrowedUnits ?> of the <?= MAX_BORROWED_UNITS ?> units allowed per student.</p>
                 <form method="post" class="form-stack">
                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
 
@@ -242,7 +251,9 @@ require __DIR__ . '/../includes/header.php';
                     <h2><a href="equipment.php?id=<?= (int) $item['id'] ?>"><?= escape($item['name']) ?></a></h2>
                     <p class="equipment-summary"><?= escape($item['description']) ?></p>
                     <div class="item-availability">
-                        <?php if ($item['available_quantity'] > 0): ?>
+                        <?php if ($item['is_under_maintenance']): ?>
+                            <span class="status status-maintenance">Under maintenance</span>
+                        <?php elseif ($item['available_quantity'] > 0): ?>
                             <span class="status status-available">Available</span>
                         <?php else: ?>
                             <span class="status status-unavailable">Unavailable</span>

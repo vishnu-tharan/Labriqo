@@ -13,7 +13,7 @@ Use XAMPP with Apache, PHP 8, and the `pdo_mysql` and `mbstring` extensions. XAM
 1. Download the repository or clone it with `git clone https://github.com/vishnu-tharan/Labriqo.git`.
 2. In the **XAMPP Control Panel**, start **Apache** and **MySQL**.
 3. Open [phpMyAdmin](http://localhost/phpmyadmin/) and select **Import** from its home page. Choose `database.sql` from the repository and run the import. The script creates the `labriqo` database and seeds five equipment types across three categories, with 42 units available.
-4. Open PowerShell in the repository folder. Run the commands below to place the app under Apache's document root. Adjust the path if XAMPP is installed elsewhere.
+4. If the project is already in C:\xampp\htdocs\Labriqo, continue to step 5. Otherwise, open PowerShell in the repository folder and run the commands below to place the app under Apache's document root. Adjust the path if XAMPP is installed elsewhere.
 
 ```powershell
 $labriqoSite = 'C:\xampp\htdocs\Labriqo'
@@ -105,10 +105,13 @@ Start with the sample inventory in a fresh local database. Use separate browser 
 | Set an item to one available unit and request three, or enter a past preferred date | The request is rejected. |
 | Cancel or reject a pending request | Its status changes, and the available quantity stays the same. |
 | Approve and issue the request for two multimeters | It becomes **Borrowed**, its due date appears, and available stock falls from eight to six. |
-| Submit two requests for four units of a five-unit item, then approve from two staff sessions | Only one issues equipment. The other stays pending and one unit remains available. |
+| Use two different student accounts to request four units each of a five-unit item, then approve from two staff sessions | Only one issues equipment. The other stays pending and one unit remains available. |
 | Verify a loan due today and one due yesterday in the overdue view | Only the outstanding loan due yesterday is overdue. The view shows one day overdue. |
 | Enter one unit for a two-unit loan, then confirm with two | The partial return is rejected. The full return restores stock, changes the status to **Returned**, and appears in history. A repeat submission leaves stock unchanged. |
 | Remove equipment with past requests after all active loans and pending requests are resolved | Staff see it as **Archived**. It is hidden from the student catalog, and its records are still in history. |
+| Mark equipment under maintenance, then submit an already-open request form or try to approve a pending request | Both actions are blocked. Existing loans can still be returned. |
+| Try to issue more than five active units to the same student, including competing approvals for different equipment | The approval exceeding the configured limit is rejected. |
+| Open a borrowing slip before and after return, then print it | The slip displays the appropriate dates and prints without navigation. Another student cannot access it. |
 | Open both dashboards and a request table on a narrow screen | Cards reflow and wide tables scroll inside their own area. |
 
 To demonstrate the overdue case immediately, use phpMyAdmin in a disposable test database after issuing a loan. Set its `issue_date` to two days ago and its `due_date` to yesterday. Leave another active loan due today for comparison.
@@ -163,3 +166,19 @@ Students can filter **My requests** by equipment and status, including **Overdue
 Use **Filter** to start at the first page or **Clear filters** to view all personal records. Paging and cancelling a pending request keep the current filters.
 
 To test, choose equipment and a status together, go to the next page, and check that the filters stay selected. Cancel a pending request while filtering by **Pending** and confirm it drops out of that filtered list. Another student's requests stay private.
+
+## Maintenance, borrowing limits, and slips
+
+Staff can set **Equipment status** to **Under maintenance** when adding or editing equipment. The flag applies to the whole equipment type. It pauses new requests and approvals while existing loans can still be returned. Stock quantities keep tracking issued and returned units.
+
+The default borrowing limit is **5 physical units per student** across all active loans, including overdue loans. Change MAX_BORROWED_UNITS in config/db.php to adjust it. Requests are checked on submission, and staff approval checks the limit again. Pending requests do not reserve the allowance. Existing loans above the limit can still be returned.
+
+Students and staff can open **Borrowing slip** beside an issued or returned record. Use the browser's Print menu or Ctrl+P. Students can access slips for their own records. The slip includes student details, equipment, quantity, reason, issue date, due date, and return date when recorded.
+
+For an existing database, run the following once in phpMyAdmin with labriqo selected. A new import already includes this field.
+
+    ALTER TABLE equipment
+    ADD COLUMN is_under_maintenance TINYINT(1) NOT NULL DEFAULT 0 AFTER is_active,
+    ADD CONSTRAINT equipment_maintenance_value CHECK (is_under_maintenance IN (0, 1));
+
+Test maintenance by opening a request form, marking the equipment under maintenance as staff, and submitting the old form. Check that it is rejected. Test the borrowing limit with competing approvals for the same student across different equipment. Check a slip before and after return, then try its link from another student's account.
