@@ -65,25 +65,32 @@ $database = db();
 $errors = [];
 $requestId = false;
 $dueDate = '';
+$rejectionReason = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     checkCsrf();
     $requestId = filter_var(formValue('request_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     $decision = formValue('decision');
     $dueDate = formValue('due_date');
+    $rejectionReason = trim(formValue('rejection_reason'));
 
     if ($requestId === false || !in_array($decision, ['approve', 'reject'], true)) {
         $errors[] = 'Choose a valid request and decision.';
     } elseif ($decision === 'approve' && !validDate($dueDate)) {
         $errors[] = 'Choose a valid return due date.';
+    } elseif ($decision === 'reject' && !validText($rejectionReason, 1000)) {
+        $errors[] = 'Enter a rejection reason of up to 1,000 characters.';
     } else {
         try {
             if ($decision === 'approve') {
                 approveRequest($database, $requestId, $dueDate);
                 $_SESSION['notice'] = 'Request approved and equipment issued.';
             } else {
-                $reject = $database->prepare("UPDATE borrow_requests SET status = 'rejected' WHERE id = ? AND status = 'pending'");
-                $reject->execute([$requestId]);
+                $reject = $database->prepare(
+                    "UPDATE borrow_requests SET status = 'rejected', rejection_reason = ?
+                     WHERE id = ? AND status = 'pending'"
+                );
+                $reject->execute([$rejectionReason, $requestId]);
 
                 if ($reject->rowCount() !== 1) {
                     throw new DomainException('Only pending requests can be rejected.');
@@ -123,7 +130,7 @@ if ($studentId !== '' && !validText($studentId, 30)) {
     $equipmentFilter = $equipmentId === false ? null : $equipmentId;
     $statement = $database->prepare(
         "SELECT r.id, r.status, r.quantity, r.reason, DATE(r.request_date) AS requested_on,
-                r.preferred_date, r.issue_date, r.due_date, r.return_date,
+                r.preferred_date, r.issue_date, r.due_date, r.return_date, r.rejection_reason,
                 u.name AS student_name, u.student_id, u.department, u.email,
                 e.name AS equipment_name, e.equipment_code, e.available_quantity
          FROM borrow_requests r
@@ -214,7 +221,12 @@ require __DIR__ . '/../includes/header.php';
                                 <div>Returned <time><?= escape($request['return_date']) ?></time></div>
                             <?php endif; ?>
                         </td>
-                        <td><span class="status status-<?= escape($request['status']) ?>"><?= escape($statusOptions[$request['status']]) ?></span></td>
+                        <td>
+                            <span class="status status-<?= escape($request['status']) ?>"><?= escape($statusOptions[$request['status']]) ?></span>
+                            <?php if ($request['status'] === 'rejected'): ?>
+                                <p class="request-reason"><?= escape($request['rejection_reason'] ?? 'No reason recorded.') ?></p>
+                            <?php endif; ?>
+                        </td>
                         <td>
                             <?php if ($request['status'] === 'pending'): ?>
                                 <form method="post" class="loan-action">
@@ -226,7 +238,14 @@ require __DIR__ . '/../includes/header.php';
                                            min="<?= escape($today) ?>" required
                                            value="<?= (int) $request['id'] === $requestId ? escape($dueDate) : '' ?>">
                                     <button class="button" type="submit" name="decision" value="approve">Approve and issue</button>
-                                    <button class="button button-danger" type="submit" name="decision" value="reject" formnovalidate>Reject</button>
+                                </form>
+                                <form method="post" class="loan-action rejection-form">
+                                    <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
+                                    <input type="hidden" name="request_id" value="<?= (int) $request['id'] ?>">
+                                    <label for="rejection-<?= (int) $request['id'] ?>">Rejection reason</label>
+                                    <textarea id="rejection-<?= (int) $request['id'] ?>" name="rejection_reason"
+                                              rows="3" maxlength="1000" required><?= (int) $request['id'] === $requestId ? escape($rejectionReason) : '' ?></textarea>
+                                    <button class="button button-danger" type="submit" name="decision" value="reject">Reject request</button>
                                 </form>
                             <?php else: ?>
                                 &mdash;

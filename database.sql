@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS borrow_requests (
     equipment_id INT UNSIGNED NOT NULL,
     quantity INT NOT NULL,
     reason TEXT NOT NULL,
+    rejection_reason VARCHAR(1000) DEFAULT NULL,
     preferred_date DATE NOT NULL,
     request_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     approval_date DATE,

@@ -519,3 +519,7 @@ tbody tr:last-child > * {
         grid-template-columns: 1fr;
     }
 }
+
+.rejection-form {
+    margin-top: 1rem;
+}

@@ -112,3 +112,17 @@ Start with the sample inventory in a fresh local database. Use separate browser 
 | Open both dashboards and a request table on a narrow screen | Cards reflow and wide tables scroll inside their own area. |
 
 To demonstrate the overdue case immediately, use phpMyAdmin in a disposable test database after issuing a loan. Set its `issue_date` to two days ago and its `due_date` to yesterday. Leave another active loan due today for comparison.
+
+
+## Rejection reasons and categories
+
+Staff enter a reason when rejecting a pending request. The reason appears alongside the rejected status for staff and the student who submitted it. Earlier rejections without a reason show **No reason recorded**.
+
+Open **Equipment**, then **Manage categories** to add or rename categories. Equipment keeps the same category link when a category is renamed.
+
+For an existing installation created before these additions, run the following once in phpMyAdmin's SQL tab with the **labriqo** database selected. A fresh import of the updated database.sql already contains the field.
+
+    ALTER TABLE borrow_requests
+    ADD COLUMN rejection_reason VARCHAR(1000) DEFAULT NULL AFTER reason;
+
+Check that rejecting without a reason shows an error, a valid rejection displays its reason to the correct student, and stock stays the same. Try adding a duplicate category name, then rename an existing category and confirm its equipment appears under the new name.
