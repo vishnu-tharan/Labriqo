@@ -40,6 +40,17 @@ $statement = $database->prepare(
 $statement->execute([$user['id']]);
 $activity = $statement->fetchAll();
 
+$statement = $database->prepare(
+    "SELECT r.id, r.quantity, r.due_date, DATEDIFF(r.due_date, CURRENT_DATE()) AS days_remaining,
+            e.name AS equipment_name, e.equipment_code
+     FROM borrow_requests r JOIN equipment e ON r.equipment_id = e.id
+     WHERE r.user_id = ? AND r.status = 'borrowed'
+       AND r.due_date BETWEEN CURRENT_DATE() AND DATE_ADD(CURRENT_DATE(), INTERVAL 3 DAY)
+     ORDER BY r.due_date, r.id"
+);
+$statement->execute([$user['id']]);
+$dueSoon = $statement->fetchAll();
+
 require __DIR__ . '/../includes/header.php';
 ?>
 <div class="page-heading page-actions dashboard-heading">
@@ -59,6 +70,53 @@ require __DIR__ . '/../includes/header.php';
         </div>
     <?php endforeach; ?>
 </dl>
+
+<?php if ($dueSoon !== []): ?>
+    <section class="return-reminders" aria-labelledby="reminder-title">
+        <div class="page-actions dashboard-section-heading">
+            <h2 id="reminder-title">Returns due soon</h2>
+            <a href="requests.php">View my borrowing records</a>
+        </div>
+        <p class="intro">Please return these items today or within the next three days.</p>
+        <div class="table-scroll dashboard-table" tabindex="0" role="region" aria-labelledby="reminder-title">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Request</th>
+                        <th scope="col">Equipment</th>
+                        <th scope="col">Quantity</th>
+                        <th scope="col">Due date</th>
+                        <th scope="col">Reminder</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($dueSoon as $loan): ?>
+                        <tr>
+                            <th scope="row">#<?= (int) $loan['id'] ?></th>
+                            <td>
+                                <?= escape($loan['equipment_name']) ?>
+                                <small class="table-note"><?= escape($loan['equipment_code']) ?></small>
+                            </td>
+                            <td><?= (int) $loan['quantity'] ?></td>
+                            <td><time><?= escape($loan['due_date']) ?></time></td>
+                            <td>
+                                <span class="status status-pending">
+                                    <?php if ((int) $loan['days_remaining'] === 0): ?>
+                                        Due today
+                                    <?php elseif ((int) $loan['days_remaining'] === 1): ?>
+                                        Due tomorrow
+                                    <?php else: ?>
+                                        Due in <?= (int) $loan['days_remaining'] ?> days
+                                    <?php endif; ?>
+                                </span>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </section>
+<?php endif; ?>
 
 <section aria-labelledby="activity-title">
     <div class="page-actions dashboard-section-heading">

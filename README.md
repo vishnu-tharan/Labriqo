@@ -135,3 +135,9 @@ Students open **My profile** and staff open **Dashboard** to find **Change passw
 After saving, use the new password for your next sign-in. If you receive an incorrect-current-password message, check the password you currently use to sign in.
 
 To test, try an incorrect current password and mismatched new passwords first. Then save a valid new password, sign out, and check that the old password fails while the new password signs you in.
+
+## Return reminders
+
+The student dashboard shows **Returns due soon** when the signed-in student has an active loan due today or within the next three days. Reminders list the equipment, quantity, and due date, with the earliest due date first. They use the same database date as the overdue view.
+
+To test, issue loans due today, tomorrow, in three days, and in four days. The first three appear in the reminder list. A returned loan drops out of the list, and each student sees only their own loans.

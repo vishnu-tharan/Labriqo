@@ -523,3 +523,7 @@ tbody tr:last-child > * {
 .rejection-form {
     margin-top: 1rem;
 }
+
+.return-reminders {
+    margin-bottom: 2rem;
+}
