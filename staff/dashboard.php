@@ -6,6 +6,26 @@ $user = requireRole('staff');
 $basePath = '../';
 $pageTitle = 'Dashboard';
 $database = db();
+$errors = [];
+$showPasswordForm = true;
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    checkCsrf();
+    if (formValue('action') !== 'change_password') {
+        http_response_code(400);
+        exit('Choose a valid account action.');
+    }
+
+    $errors = changePassword(
+        $user['id'], formValue('current_password'), formValue('new_password'), formValue('confirm_password')
+    );
+
+    if ($errors === []) {
+        $_SESSION['notice'] = 'Password changed.';
+        redirect('dashboard.php');
+    }
+}
+
 
 $inventory = $database->query(
     'SELECT COUNT(*) AS equipment_types, COALESCE(SUM(total_quantity), 0) AS total_units

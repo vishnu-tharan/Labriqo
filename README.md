@@ -126,3 +126,12 @@ For an existing installation created before these additions, run the following o
     ADD COLUMN rejection_reason VARCHAR(1000) DEFAULT NULL AFTER reason;
 
 Check that rejecting without a reason shows an error, a valid rejection displays its reason to the correct student, and stock stays the same. Try adding a duplicate category name, then rename an existing category and confirm its equipment appears under the new name.
+
+
+## Change password
+
+Students open **My profile** and staff open **Dashboard** to find **Change password**. Enter the current password, a new password of at least 8 characters, and the new password again to confirm it. The form supports passwords up to 72 bytes.
+
+After saving, use the new password for your next sign-in. If you receive an incorrect-current-password message, check the password you currently use to sign in.
+
+To test, try an incorrect current password and mismatched new passwords first. Then save a valid new password, sign out, and check that the old password fails while the new password signs you in.

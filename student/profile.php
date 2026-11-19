@@ -8,7 +8,19 @@ $email = $user['email'];
 $department = $user['department'];
 $errors = [];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') === 'change_password') {
+    checkCsrf();
+    $errors = changePassword(
+        $user['id'], formValue('current_password'), formValue('new_password'), formValue('confirm_password')
+    );
+
+    if ($errors === []) {
+        $_SESSION['notice'] = 'Password changed.';
+        redirect('profile.php');
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') !== 'change_password') {
     checkCsrf();
 
     $name = trim(formValue('name'));
@@ -35,6 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $basePath = '../';
 $pageTitle = 'My profile';
+$showPasswordForm = true;
 require __DIR__ . '/../includes/header.php';
 ?>
 <section class="panel form-panel" aria-labelledby="page-title">

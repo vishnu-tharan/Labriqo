@@ -139,3 +139,40 @@ function profileErrors(string $name, string $email, string $department): array
 
     return $errors;
 }
+
+
+function changePassword(int $userId, string $currentPassword, string $newPassword, string $confirmation): array
+{
+    if (!mb_check_encoding($newPassword, 'UTF-8') || mb_strlen($newPassword, 'UTF-8') < 8
+        || strlen($newPassword) > 72 || str_contains($newPassword, "\0")) {
+        return ['Use a new password with at least 8 characters and at most 72 bytes.'];
+    }
+
+    if ($newPassword !== $confirmation) {
+        return ['The new passwords do not match.'];
+    }
+
+    $statement = db()->prepare('SELECT password FROM users WHERE id = ?');
+    $statement->execute([$userId]);
+    $storedHash = $statement->fetchColumn();
+
+    if ($storedHash === false || strlen($currentPassword) > 72 || str_contains($currentPassword, "\0")
+        || !password_verify($currentPassword, $storedHash)) {
+        return ['Your current password is incorrect.'];
+    }
+
+    // Match the old hash as well so another password change cannot be overwritten.
+    $update = db()->prepare('UPDATE users SET password = ? WHERE id = ? AND BINARY password = ?');
+    $update->execute([password_hash($newPassword, PASSWORD_DEFAULT), $userId, $storedHash]);
+
+    if ($update->rowCount() !== 1) {
+        return ['Your password changed in another session. Enter your current password and try again.'];
+    }
+
+    if (!session_regenerate_id(true)) {
+        throw new RuntimeException('Unable to renew the Labriqo session.');
+    }
+    unset($_SESSION['csrf_token']);
+
+    return [];
+}
