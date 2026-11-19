@@ -122,8 +122,8 @@ if ($detailView) {
                AND (? IS NULL OR e.category_id = ?)
              ORDER BY e.name, e.equipment_code'
         );
-        $statement->execute([$search, $search, $categoryFilter, $categoryFilter]);
-        $equipment = $statement->fetchAll();
+        $pagination = paginate($database, $statement, [$search, $search, $categoryFilter, $categoryFilter]);
+        $equipment = $pagination['records'];
     }
 }
 

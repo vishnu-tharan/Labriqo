@@ -36,8 +36,8 @@ $statement = $database->prepare(
      WHERE r.user_id = ?
      ORDER BY r.request_date DESC, r.id DESC"
 );
-$statement->execute([$user['id']]);
-$requests = $statement->fetchAll();
+$pagination = paginate($database, $statement, [$user['id']]);
+$requests = $pagination['records'];
 
 require __DIR__ . '/../includes/header.php';
 ?>

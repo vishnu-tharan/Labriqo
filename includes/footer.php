@@ -1,3 +1,16 @@
+<?php if (isset($pagination) && $pagination['pages'] > 1): ?>
+    <nav class="pagination" aria-label="List pages">
+        <?php if ($pagination['page'] > 1): ?>
+            <a class="button" rel="prev"
+               href="?<?= escape(http_build_query(array_merge($_GET, ['page' => $pagination['page'] - 1]))) ?>">Previous</a>
+        <?php endif; ?>
+        <span>Page <?= (int) $pagination['page'] ?> of <?= (int) $pagination['pages'] ?></span>
+        <?php if ($pagination['page'] < $pagination['pages']): ?>
+            <a class="button" rel="next"
+               href="?<?= escape(http_build_query(array_merge($_GET, ['page' => $pagination['page'] + 1]))) ?>">Next</a>
+        <?php endif; ?>
+    </nav>
+<?php endif; ?>
 <?php if (!empty($showPasswordForm)): ?>
     <section class="panel form-panel request-panel" aria-labelledby="password-title">
         <h2 id="password-title">Change password</h2>

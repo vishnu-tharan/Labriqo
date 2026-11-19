@@ -527,3 +527,12 @@ tbody tr:last-child > * {
 .return-reminders {
     margin-bottom: 2rem;
 }
+
+.pagination {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 1.5rem;
+}

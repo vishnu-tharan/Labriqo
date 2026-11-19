@@ -149,3 +149,9 @@ Staff can choose **Download CSV** on **Equipment** or **Requests**. The download
 Inventory exports include quantities and the active/archive flag. Borrowing exports include student details, quantities, reasons, statuses, and dates. User-entered values that could be interpreted as spreadsheet formulas receive a leading apostrophe in the CSV.
 
 To test, filter inventory to one equipment code and download it. Check that only that item appears. Then filter requests by a student ID and status and check that the download matches those filters.
+
+## Pagination
+
+Equipment catalogs, inventory, borrowing requests, and active-loan lists show 10 records per page. Use **Previous** and **Next** below the list. Filters carry across pages, and applying a new filter starts at the first page. CSV downloads include all matching records.
+
+To test, add at least 11 equipment entries or requests in a test database. Check that the second page shows the remaining records. Then apply a filter and check that paging keeps it selected. Download a CSV and confirm that it includes matches from every page.

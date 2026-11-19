@@ -141,8 +141,8 @@ if ($studentId !== '' && !validText($studentId, 30)) {
            AND (? = 'all' OR r.status = ?)
          ORDER BY r.request_date DESC, r.id DESC"
     );
-    $statement->execute([$studentId, $equipmentFilter, $equipmentFilter, $status, $status]);
-    $requests = $statement->fetchAll();
+    $pagination = paginate($database, $statement, [$studentId, $equipmentFilter, $equipmentFilter, $status, $status], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv');
+    $requests = $pagination['records'];
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv' && $errors === []) {

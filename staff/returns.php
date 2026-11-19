@@ -95,8 +95,8 @@ if ($studentId !== '' && !validText($studentId, 30)) {
            AND (? = 'all' OR r.due_date < CURRENT_DATE())
          ORDER BY r.due_date IS NULL, r.due_date, r.id"
     );
-    $statement->execute([$studentId, $view]);
-    $loans = $statement->fetchAll();
+    $pagination = paginate($database, $statement, [$studentId, $view]);
+    $loans = $pagination['records'];
 }
 
 require __DIR__ . '/../includes/header.php';

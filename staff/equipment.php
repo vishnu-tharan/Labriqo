@@ -263,8 +263,8 @@ if ($mode === 'list') {
                AND (? IS NULL OR e.category_id = ?)
              ORDER BY e.is_active DESC, e.name, e.equipment_code'
         );
-        $statement->execute([$search, $search, $categoryFilter, $categoryFilter]);
-        $equipment = $statement->fetchAll();
+        $pagination = paginate($database, $statement, [$search, $search, $categoryFilter, $categoryFilter], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv');
+        $equipment = $pagination['records'];
     }
 }
 
