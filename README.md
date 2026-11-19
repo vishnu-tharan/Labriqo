@@ -155,3 +155,11 @@ To test, filter inventory to one equipment code and download it. Check that only
 Equipment catalogs, inventory, borrowing requests, and active-loan lists show 10 records per page. Use **Previous** and **Next** below the list. Filters carry across pages, and applying a new filter starts at the first page. CSV downloads include all matching records.
 
 To test, add at least 11 equipment entries or requests in a test database. Check that the second page shows the remaining records. Then apply a filter and check that paging keeps it selected. Download a CSV and confirm that it includes matches from every page.
+
+## Student history filters
+
+Students can filter **My requests** by equipment and status, including **Overdue**. The equipment dropdown contains items from that student's own requests, including archived items. **Borrowed** includes all active loans, and **Overdue** selects active loans past their due date.
+
+Use **Filter** to start at the first page or **Clear filters** to view all personal records. Paging and cancelling a pending request keep the current filters.
+
+To test, choose equipment and a status together, go to the next page, and check that the filters stay selected. Cancel a pending request while filtering by **Pending** and confirm it drops out of that filtered list. Another student's requests stay private.

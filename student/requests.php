@@ -8,6 +8,22 @@ $pageTitle = 'My requests';
 $database = db();
 $errors = [];
 
+$statusOptions = [
+    'all' => 'All statuses',
+    'pending' => 'Pending',
+    'borrowed' => 'Borrowed',
+    'overdue' => 'Overdue',
+    'returned' => 'Returned',
+    'rejected' => 'Rejected',
+    'cancelled' => 'Cancelled',
+];
+$status = queryValue('status');
+if (!isset($statusOptions[$status])) {
+    $status = 'all';
+}
+$equipmentId = filter_var(queryValue('equipment_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+$equipmentFilter = $equipmentId === false ? null : $equipmentId;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     checkCsrf();
     $requestId = filter_var(formValue('request_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -21,12 +37,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($cancel->rowCount() === 1) {
             $_SESSION['notice'] = 'Request cancelled.';
-            redirect('requests.php');
+            $page = filter_var(queryValue('page'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+            redirect('requests.php?' . http_build_query([
+                'status' => $status,
+                'equipment_id' => $equipmentFilter,
+                'page' => $page === false ? 1 : $page,
+            ]));
         }
     }
 
     $errors[] = 'This request could not be cancelled. Only your pending requests can be cancelled.';
 }
+
+$equipmentStatement = $database->prepare(
+    'SELECT DISTINCT e.id, e.name, e.equipment_code
+     FROM equipment e JOIN borrow_requests r ON r.equipment_id = e.id
+     WHERE r.user_id = ?
+     ORDER BY e.name, e.equipment_code'
+);
+$equipmentStatement->execute([$user['id']]);
+$equipmentOptions = $equipmentStatement->fetchAll();
 
 $statement = $database->prepare(
     "SELECT r.id, r.equipment_id, r.quantity, r.status, DATE(r.request_date) AS requested_on,
@@ -34,9 +64,13 @@ $statement = $database->prepare(
             (r.status = 'borrowed' AND r.due_date < CURRENT_DATE()) AS is_overdue
      FROM borrow_requests r JOIN equipment e ON r.equipment_id = e.id
      WHERE r.user_id = ?
+       AND (? IS NULL OR r.equipment_id = ?)
+       AND (? = 'all' OR r.status = ? OR (? = 'overdue' AND r.status = 'borrowed' AND r.due_date < CURRENT_DATE()))
      ORDER BY r.request_date DESC, r.id DESC"
 );
-$pagination = paginate($database, $statement, [$user['id']]);
+$pagination = paginate($database, $statement, [
+    $user['id'], $equipmentFilter, $equipmentFilter, $status, $status, $status,
+]);
 $requests = $pagination['records'];
 
 require __DIR__ . '/../includes/header.php';
@@ -46,8 +80,34 @@ require __DIR__ . '/../includes/header.php';
     <a class="button" href="equipment.php">Browse equipment</a>
 </div>
 
+<form method="get" class="panel filter-form">
+    <div class="field">
+        <label for="equipment-filter">Equipment</label>
+        <select id="equipment-filter" name="equipment_id">
+            <option value="">All equipment</option>
+            <?php foreach ($equipmentOptions as $item): ?>
+                <option value="<?= (int) $item['id'] ?>" <?= $equipmentId === (int) $item['id'] ? 'selected' : '' ?>>
+                    <?= escape($item['name']) ?> · <?= escape($item['equipment_code']) ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+    </div>
+    <div class="field">
+        <label for="status-filter">Status</label>
+        <select id="status-filter" name="status">
+            <?php foreach ($statusOptions as $value => $label): ?>
+                <option value="<?= $value ?>" <?= $status === $value ? 'selected' : '' ?>><?= escape($label) ?></option>
+            <?php endforeach; ?>
+        </select>
+    </div>
+    <button class="button" type="submit">Filter</button>
+    <?php if ($equipmentFilter !== null || $status !== 'all'): ?>
+        <a class="filter-reset" href="requests.php">Clear filters</a>
+    <?php endif; ?>
+</form>
+
 <?php if ($requests === []): ?>
-    <p class="panel">You have no borrowing requests yet.</p>
+    <p class="panel"><?= $equipmentOptions === [] ? 'You have no borrowing requests yet.' : 'No borrowing requests match these filters.' ?></p>
 <?php else: ?>
     <div class="table-scroll" tabindex="0" role="region" aria-label="Borrowing requests and history">
         <table>
