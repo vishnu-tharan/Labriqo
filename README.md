@@ -182,3 +182,24 @@ For an existing database, run the following once in phpMyAdmin with labriqo sele
     ADD CONSTRAINT equipment_maintenance_value CHECK (is_under_maintenance IN (0, 1));
 
 Test maintenance by opening a request form, marking the equipment under maintenance as staff, and submitting the old form. Check that it is rejected. Test the borrowing limit with competing approvals for the same student across different equipment. Check a slip before and after return, then try its link from another student's account.
+
+## Due-date extensions
+
+On **My requests**, students can request a later due date for an active loan by entering a date and reason. The date must be later than the current due date and today or later. The current due date applies until approval. One extension per loan can await review at a time.
+
+Staff open **Requests**, then **Review extensions**. Approving uses the date the student requested. Rejection requires a reason and keeps the current due date. Students can submit another extension after a decision. Each borrowing record stores its latest extension request and decision.
+
+Extensions also work for overdue loans. Returning a loan closes any extension awaiting review. Decisions update the due date used by reminders, overdue lists, CSV exports, and printable slips. Stock and the quantity on loan are unaffected.
+
+For an existing database, run this once in phpMyAdmin with labriqo selected. A new database import includes these columns.
+
+    ALTER TABLE borrow_requests
+    ADD COLUMN extension_due_date DATE DEFAULT NULL,
+    ADD COLUMN extension_reason VARCHAR(1000) DEFAULT NULL,
+    ADD COLUMN extension_status ENUM('pending', 'approved', 'rejected', 'cancelled') DEFAULT NULL,
+    ADD COLUMN extension_version INT UNSIGNED NOT NULL DEFAULT 0,
+    ADD COLUMN extension_requested_at DATETIME DEFAULT NULL,
+    ADD COLUMN extension_decided_at DATETIME DEFAULT NULL,
+    ADD COLUMN extension_review_note VARCHAR(1000) DEFAULT NULL;
+
+Test invalid dates, empty reasons, duplicate pending requests, another student's loan, approval, rejection, and a return before review. A staff form from an earlier extension must not decide a newer request.

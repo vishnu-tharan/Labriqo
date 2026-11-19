@@ -2,6 +2,48 @@
 
 require_once __DIR__ . '/../includes/auth.php';
 
+function requestExtension(PDO $database, int $studentId, int $requestId, string $date, string $reason): void
+{
+    if (!validDate($date) || !validText($reason, 1000)) {
+        throw new DomainException('Enter a valid requested due date and a reason of up to 1,000 characters.');
+    }
+
+    $database->beginTransaction();
+    try {
+        $statement = $database->prepare(
+            "SELECT due_date, extension_status, CURRENT_DATE() AS today FROM borrow_requests
+             WHERE id = ? AND user_id = ? AND status = 'borrowed' FOR UPDATE"
+        );
+        $statement->execute([$requestId, $studentId]);
+        $loan = $statement->fetch();
+
+        if ($loan === false || $loan['due_date'] === null) {
+            throw new DomainException('Only your active loans with a due date can be extended.');
+        }
+        if ($loan['extension_status'] === 'pending') {
+            throw new DomainException('This loan already has an extension awaiting review.');
+        }
+        if ($date <= $loan['due_date'] || $date < $loan['today']) {
+            throw new DomainException('Choose a date later than the current due date and today or later.');
+        }
+
+        $update = $database->prepare(
+            "UPDATE borrow_requests
+             SET extension_due_date = ?, extension_reason = ?, extension_status = 'pending',
+                 extension_version = extension_version + 1, extension_requested_at = CURRENT_TIMESTAMP(),
+                 extension_decided_at = NULL, extension_review_note = NULL
+             WHERE id = ?"
+        );
+        $update->execute([$date, $reason, $requestId]);
+        $database->commit();
+    } catch (Throwable $exception) {
+        if ($database->inTransaction()) {
+            $database->rollBack();
+        }
+        throw $exception;
+    }
+}
+
 $user = requireRole('student');
 $basePath = '../';
 $pageTitle = 'My requests';
@@ -32,7 +74,23 @@ if (!isset($statusOptions[$status])) {
 $equipmentId = filter_var(queryValue('equipment_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 $equipmentFilter = $equipmentId === false ? null : $equipmentId;
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') === 'extension') {
+    checkCsrf();
+    $requestId = filter_var(formValue('request_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+    try {
+        if ($requestId === false) {
+            throw new DomainException('Choose a valid active loan.');
+        }
+        requestExtension($database, $user['id'], $requestId, formValue('extension_due_date'), trim(formValue('extension_reason')));
+        $_SESSION['notice'] = 'Extension requested. The current due date applies until staff approve it.';
+        redirect('requests.php?' . http_build_query(['status' => $status, 'equipment_id' => $equipmentFilter, 'page' => queryValue('page')]));
+    } catch (DomainException $exception) {
+        $errors[] = $exception->getMessage();
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') !== 'extension') {
     checkCsrf();
     $requestId = filter_var(formValue('request_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 
@@ -68,6 +126,7 @@ $equipmentOptions = $equipmentStatement->fetchAll();
 
 $statement = $database->prepare(
     "SELECT r.id, r.equipment_id, r.quantity, r.status, DATE(r.request_date) AS requested_on,
+            r.extension_due_date, r.extension_reason, r.extension_status, r.extension_review_note,
             r.preferred_date, r.issue_date, r.due_date, r.return_date, r.rejection_reason, e.name, e.equipment_code, e.is_active,
             (r.status = 'borrowed' AND r.due_date < CURRENT_DATE()) AS is_overdue
      FROM borrow_requests r JOIN equipment e ON r.equipment_id = e.id
@@ -151,6 +210,15 @@ require __DIR__ . '/../includes/header.php';
                             <?php if ($request['due_date'] !== null): ?>
                                 <div>Due <time><?= escape($request['due_date']) ?></time></div>
                             <?php endif; ?>
+                            <?php if ($request['extension_status'] !== null): ?>
+                                <p class="request-reason">
+                                    Extension <?= escape($request['extension_status']) ?>:
+                                    <time><?= escape($request['extension_due_date']) ?></time>
+                                </p>
+                                <?php if ($request['extension_review_note'] !== null): ?>
+                                    <p class="request-reason"><?= escape($request['extension_review_note']) ?></p>
+                                <?php endif; ?>
+                            <?php endif; ?>
                             <?php if ($request['return_date'] !== null): ?>
                                 <div>Returned <time><?= escape($request['return_date']) ?></time></div>
                             <?php endif; ?>
@@ -175,6 +243,20 @@ require __DIR__ . '/../includes/header.php';
                                 </form>
                             <?php elseif (in_array($request['status'], ['borrowed', 'returned'], true)): ?>
                                 <a href="requests.php?slip=<?= (int) $request['id'] ?>">Borrowing slip</a>
+                                <?php if ($request['status'] === 'borrowed' && $request['due_date'] !== null && $request['extension_status'] !== 'pending'): ?>
+                                    <form method="post" class="loan-action rejection-form">
+                                        <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
+                                        <input type="hidden" name="action" value="extension">
+                                        <input type="hidden" name="request_id" value="<?= (int) $request['id'] ?>">
+                                        <label for="extension-date-<?= (int) $request['id'] ?>">Requested due date</label>
+                                        <input id="extension-date-<?= (int) $request['id'] ?>" name="extension_due_date"
+                                               type="date" required>
+                                        <label for="extension-reason-<?= (int) $request['id'] ?>">Extension reason</label>
+                                        <textarea id="extension-reason-<?= (int) $request['id'] ?>" name="extension_reason"
+                                                  rows="3" maxlength="1000" required></textarea>
+                                        <button class="button" type="submit">Request extension</button>
+                                    </form>
+                                <?php endif; ?>
                             <?php else: ?>
                                 &mdash;
                             <?php endif; ?>

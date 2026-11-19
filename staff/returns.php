@@ -45,6 +45,13 @@ function recordReturn(PDO $database, int $requestId, int $returnedQuantity): voi
         );
         $returned->execute([$requestId]);
 
+        $closeExtension = $database->prepare(
+            "UPDATE borrow_requests SET extension_status = 'cancelled', extension_decided_at = CURRENT_TIMESTAMP(),
+             extension_review_note = 'Equipment returned before extension review.'
+             WHERE id = ? AND extension_status = 'pending'"
+        );
+        $closeExtension->execute([$requestId]);
+
         $database->commit();
     } catch (Throwable $exception) {
         if ($database->inTransaction()) {

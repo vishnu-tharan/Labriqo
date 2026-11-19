@@ -72,6 +72,48 @@ function approveRequest(PDO $database, int $requestId, string $dueDate): void
     }
 }
 
+function reviewExtension(PDO $database, int $requestId, int $version, string $decision, string $note): void
+{
+    if (!in_array($decision, ['approve', 'reject'], true)
+        || ($note !== '' && !validText($note, 1000)) || ($decision === 'reject' && $note === '')) {
+        throw new DomainException('Choose an extension decision and enter a rejection reason of up to 1,000 characters when rejecting.');
+    }
+
+    $database->beginTransaction();
+    try {
+        $statement = $database->prepare(
+            "SELECT due_date, extension_due_date, CURRENT_DATE() AS today
+             FROM borrow_requests
+             WHERE id = ? AND status = 'borrowed' AND extension_status = 'pending'
+               AND extension_version = ? FOR UPDATE"
+        );
+        $statement->execute([$requestId, $version]);
+        $loan = $statement->fetch();
+
+        if ($loan === false) {
+            throw new DomainException('This extension is no longer awaiting review. Refresh the page.');
+        }
+        if ($decision === 'approve' && ($loan['extension_due_date'] <= $loan['due_date']
+            || $loan['extension_due_date'] < $loan['today'])) {
+            throw new DomainException('The requested date must still be later than the current due date and today or later.');
+        }
+
+        $newDueDate = $decision === 'approve' ? $loan['extension_due_date'] : $loan['due_date'];
+        $status = $decision === 'approve' ? 'approved' : 'rejected';
+        $update = $database->prepare(
+            'UPDATE borrow_requests SET due_date = ?, extension_status = ?,
+             extension_review_note = ?, extension_decided_at = CURRENT_TIMESTAMP() WHERE id = ?'
+        );
+        $update->execute([$newDueDate, $status, $note === '' ? null : $note, $requestId]);
+        $database->commit();
+    } catch (Throwable $exception) {
+        if ($database->inTransaction()) {
+            $database->rollBack();
+        }
+        throw $exception;
+    }
+}
+
 $user = requireRole('staff');
 $basePath = '../';
 $pageTitle = 'Borrowing requests';
@@ -89,7 +131,24 @@ $requestId = false;
 $dueDate = '';
 $rejectionReason = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') === 'extension') {
+    checkCsrf();
+    $requestId = filter_var(formValue('request_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    $version = filter_var(formValue('extension_version'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+    try {
+        if ($requestId === false || $version === false) {
+            throw new DomainException('Choose a valid pending extension.');
+        }
+        reviewExtension($database, $requestId, $version, formValue('decision'), trim(formValue('extension_review_note')));
+        $_SESSION['notice'] = 'Extension decision saved.';
+        redirect('requests.php?status=extensions');
+    } catch (DomainException $exception) {
+        $errors[] = $exception->getMessage();
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') !== 'extension') {
     checkCsrf();
     $requestId = filter_var(formValue('request_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     $decision = formValue('decision');
@@ -129,6 +188,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $statusOptions = [
     'all' => 'All statuses',
+    'extensions' => 'Extension requests',
     'pending' => 'Pending',
     'borrowed' => 'Borrowed',
     'returned' => 'Returned',
@@ -152,6 +212,7 @@ if ($studentId !== '' && !validText($studentId, 30)) {
     $equipmentFilter = $equipmentId === false ? null : $equipmentId;
     $statement = $database->prepare(
         "SELECT r.id, r.status, r.quantity, r.reason, DATE(r.request_date) AS requested_on,
+                r.extension_due_date, r.extension_reason, r.extension_status, r.extension_version, r.extension_review_note,
                 r.preferred_date, r.approval_date, r.issue_date, r.due_date, r.return_date, r.rejection_reason,
                 u.name AS student_name, u.student_id, u.department, u.email,
                 e.name AS equipment_name, e.equipment_code, e.available_quantity, e.is_under_maintenance
@@ -160,10 +221,10 @@ if ($studentId !== '' && !validText($studentId, 30)) {
          JOIN equipment e ON r.equipment_id = e.id
          WHERE LOCATE(?, u.student_id) > 0
            AND (? IS NULL OR r.equipment_id = ?)
-           AND (? = 'all' OR r.status = ?)
+           AND (? = 'all' OR r.status = ? OR (? = 'extensions' AND r.status = 'borrowed' AND r.extension_status = 'pending'))
          ORDER BY r.request_date DESC, r.id DESC"
     );
-    $pagination = paginate($database, $statement, [$studentId, $equipmentFilter, $equipmentFilter, $status, $status], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv');
+    $pagination = paginate($database, $statement, [$studentId, $equipmentFilter, $equipmentFilter, $status, $status, $status], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv');
     $requests = $pagination['records'];
 }
 
@@ -186,6 +247,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv' && $e
         'due_date' => 'Due date',
         'return_date' => 'Return date',
         'rejection_reason' => 'Rejection reason',
+        'extension_due_date' => 'Requested extension date',
+        'extension_status' => 'Extension status',
+        'extension_reason' => 'Extension reason',
+        'extension_review_note' => 'Extension review note',
     ], $requests);
 }
 
@@ -193,7 +258,10 @@ require __DIR__ . '/../includes/header.php';
 ?>
 <div class="page-heading page-actions">
     <h1>Borrowing requests</h1>
-    <a href="returns.php">View active loans and returns</a>
+    <div class="form-actions">
+        <a href="requests.php?status=extensions">Review extensions</a>
+        <a href="returns.php">View active loans and returns</a>
+    </div>
 </div>
 
 <form method="get" class="panel filter-form">
@@ -262,6 +330,16 @@ require __DIR__ . '/../includes/header.php';
                             <?php if ($request['due_date'] !== null): ?>
                                 <div>Due <time><?= escape($request['due_date']) ?></time></div>
                             <?php endif; ?>
+                            <?php if ($request['extension_status'] !== null): ?>
+                                <p class="request-reason">
+                                    Extension <?= escape($request['extension_status']) ?>:
+                                    <time><?= escape($request['extension_due_date']) ?></time>
+                                </p>
+                                <p class="request-reason"><?= escape($request['extension_reason']) ?></p>
+                                <?php if ($request['extension_review_note'] !== null): ?>
+                                    <p class="request-reason"><?= escape($request['extension_review_note']) ?></p>
+                                <?php endif; ?>
+                            <?php endif; ?>
                             <?php if ($request['return_date'] !== null): ?>
                                 <div>Returned <time><?= escape($request['return_date']) ?></time></div>
                             <?php endif; ?>
@@ -297,6 +375,19 @@ require __DIR__ . '/../includes/header.php';
                                 </form>
                             <?php elseif (in_array($request['status'], ['borrowed', 'returned'], true)): ?>
                                 <a href="requests.php?slip=<?= (int) $request['id'] ?>">Borrowing slip</a>
+                                <?php if ($request['status'] === 'borrowed' && $request['extension_status'] === 'pending'): ?>
+                                    <form method="post" class="loan-action rejection-form">
+                                        <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
+                                        <input type="hidden" name="action" value="extension">
+                                        <input type="hidden" name="request_id" value="<?= (int) $request['id'] ?>">
+                                        <input type="hidden" name="extension_version" value="<?= (int) $request['extension_version'] ?>">
+                                        <label for="extension-note-<?= (int) $request['id'] ?>">Review note (required for rejection)</label>
+                                        <textarea id="extension-note-<?= (int) $request['id'] ?>" name="extension_review_note"
+                                                  rows="3" maxlength="1000"></textarea>
+                                        <button class="button" type="submit" name="decision" value="approve">Approve extension</button>
+                                        <button class="button button-danger" type="submit" name="decision" value="reject">Reject extension</button>
+                                    </form>
+                                <?php endif; ?>
                             <?php else: ?>
                                 &mdash;
                             <?php endif; ?>
