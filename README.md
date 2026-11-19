@@ -141,3 +141,11 @@ To test, try an incorrect current password and mismatched new passwords first. T
 The student dashboard shows **Returns due soon** when the signed-in student has an active loan due today or within the next three days. Reminders list the equipment, quantity, and due date, with the earliest due date first. They use the same database date as the overdue view.
 
 To test, issue loans due today, tomorrow, in three days, and in four days. The first three appear in the reminder list. A returned loan drops out of the list, and each student sees only their own loans.
+
+## CSV downloads
+
+Staff can choose **Download CSV** on **Equipment** or **Requests**. The download uses the search and filters selected in that form. Choose **All statuses** on Requests to include the full borrowing history. A search with no matching records produces a file containing the column headings.
+
+Inventory exports include quantities and the active/archive flag. Borrowing exports include student details, quantities, reasons, statuses, and dates. User-entered values that could be interpreted as spreadsheet formulas receive a leading apostrophe in the CSV.
+
+To test, filter inventory to one equipment code and download it. Check that only that item appears. Then filter requests by a student ID and status and check that the download matches those filters.

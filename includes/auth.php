@@ -176,3 +176,39 @@ function changePassword(int $userId, string $currentPassword, string $newPasswor
 
     return [];
 }
+
+
+function downloadCsv(string $filename, array $columns, array $records): void
+{
+    $output = fopen('php://output', 'w');
+
+    if ($output === false) {
+        throw new RuntimeException('Unable to open the CSV download.');
+    }
+
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: no-store');
+    header('X-Content-Type-Options: nosniff');
+
+    // The UTF-8 marker helps spreadsheet programs display names correctly.
+    fwrite($output, "\xEF\xBB\xBF");
+    fputcsv($output, array_values($columns), ',', '"', '');
+
+    foreach ($records as $record) {
+        $row = [];
+        foreach ($columns as $field => $label) {
+            $value = (string) ($record[$field] ?? '');
+
+            // Keep user-entered spreadsheet formulas as plain text.
+            if (preg_match('/^[\s\x00-\x1F]*[=+\-@]/u', $value) === 1) {
+                $value = "'" . $value;
+            }
+            $row[] = $value;
+        }
+        fputcsv($output, $row, ',', '"', '');
+    }
+
+    fclose($output);
+    exit;
+}

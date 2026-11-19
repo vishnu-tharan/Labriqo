@@ -130,7 +130,7 @@ if ($studentId !== '' && !validText($studentId, 30)) {
     $equipmentFilter = $equipmentId === false ? null : $equipmentId;
     $statement = $database->prepare(
         "SELECT r.id, r.status, r.quantity, r.reason, DATE(r.request_date) AS requested_on,
-                r.preferred_date, r.issue_date, r.due_date, r.return_date, r.rejection_reason,
+                r.preferred_date, r.approval_date, r.issue_date, r.due_date, r.return_date, r.rejection_reason,
                 u.name AS student_name, u.student_id, u.department, u.email,
                 e.name AS equipment_name, e.equipment_code, e.available_quantity
          FROM borrow_requests r
@@ -143,6 +143,28 @@ if ($studentId !== '' && !validText($studentId, 30)) {
     );
     $statement->execute([$studentId, $equipmentFilter, $equipmentFilter, $status, $status]);
     $requests = $statement->fetchAll();
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv' && $errors === []) {
+    downloadCsv('labriqo-borrowing-records.csv', [
+        'id' => 'Request ID',
+        'student_id' => 'Student ID',
+        'student_name' => 'Student name',
+        'email' => 'Email',
+        'department' => 'Department',
+        'equipment_code' => 'Equipment code',
+        'equipment_name' => 'Equipment name',
+        'quantity' => 'Quantity',
+        'reason' => 'Borrowing reason',
+        'status' => 'Status',
+        'requested_on' => 'Request date',
+        'preferred_date' => 'Preferred date',
+        'approval_date' => 'Approval date',
+        'issue_date' => 'Issue date',
+        'due_date' => 'Due date',
+        'return_date' => 'Return date',
+        'rejection_reason' => 'Rejection reason',
+    ], $requests);
 }
 
 require __DIR__ . '/../includes/header.php';
@@ -177,6 +199,7 @@ require __DIR__ . '/../includes/header.php';
         </select>
     </div>
     <button class="button" type="submit">Filter</button>
+    <button class="button" type="submit" name="export" value="csv">Download CSV</button>
 </form>
 
 <?php if ($requests === []): ?>

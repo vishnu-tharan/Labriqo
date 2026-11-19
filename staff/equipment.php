@@ -268,6 +268,22 @@ if ($mode === 'list') {
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $mode === 'list'
+    && queryValue('export') === 'csv' && $errors === []) {
+    downloadCsv('labriqo-inventory.csv', [
+        'id' => 'Equipment ID',
+        'equipment_code' => 'Equipment code',
+        'name' => 'Equipment name',
+        'category_name' => 'Category',
+        'description' => 'Description',
+        'total_quantity' => 'Total quantity',
+        'available_quantity' => 'Available quantity',
+        'location' => 'Storage location',
+        'image_url' => 'Image URL',
+        'is_active' => 'Active (1=yes, 0=archived)',
+    ], $equipment);
+}
+
 require __DIR__ . '/../includes/header.php';
 ?>
 <?php if ($mode === 'list'): ?>
@@ -296,6 +312,7 @@ require __DIR__ . '/../includes/header.php';
             </select>
         </div>
         <button class="button" type="submit">Search</button>
+        <button class="button" type="submit" name="export" value="csv">Download CSV</button>
         <?php if ($search !== '' || $categoryId !== false): ?>
             <a class="filter-reset" href="equipment.php">Clear filters</a>
         <?php endif; ?>
