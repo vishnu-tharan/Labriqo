@@ -37,16 +37,18 @@ function currentUser(): ?array
     }
 
     $statement = db()->prepare(
-        'SELECT id, student_id, name, email, department, role FROM users WHERE id = ?'
+        'SELECT id, student_id, name, email, department, role, password, is_approved FROM users WHERE id = ?'
     );
     $statement->execute([$_SESSION['user_id']]);
     $user = $statement->fetch();
 
-    if ($user === false) {
-        unset($_SESSION['user_id']);
+    if ($user === false || ($user['role'] === 'student' && !$user['is_approved'])
+        || !hash_equals(hash('sha256', $user['password']), $_SESSION['password_stamp'] ?? '')) {
+        $_SESSION = [];
         return null;
     }
 
+    unset($user['password'], $user['is_approved']);
     return $user;
 }
 
@@ -163,7 +165,8 @@ function changePassword(int $userId, string $currentPassword, string $newPasswor
 
     // Match the old hash as well so another password change cannot be overwritten.
     $update = db()->prepare('UPDATE users SET password = ? WHERE id = ? AND BINARY password = ?');
-    $update->execute([password_hash($newPassword, PASSWORD_DEFAULT), $userId, $storedHash]);
+    $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
+    $update->execute([$newHash, $userId, $storedHash]);
 
     if ($update->rowCount() !== 1) {
         return ['Your password changed in another session. Enter your current password and try again.'];
@@ -172,6 +175,7 @@ function changePassword(int $userId, string $currentPassword, string $newPasswor
     if (!session_regenerate_id(true)) {
         throw new RuntimeException('Unable to renew the Labriqo session.');
     }
+    $_SESSION['password_stamp'] = hash('sha256', $newHash);
     unset($_SESSION['csrf_token']);
 
     return [];

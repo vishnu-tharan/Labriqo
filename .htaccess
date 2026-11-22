@@ -1,0 +1,12 @@
+Require local
+Options -Indexes
+RedirectMatch 404 "(?i)(?:^|/)\.git(?:/|$)"
+
+<FilesMatch "(?i)(^\.|\.sql$)">
+    Require all denied
+</FilesMatch>
+
+<IfModule php_module>
+    php_flag display_errors Off
+    php_flag log_errors On
+</IfModule>

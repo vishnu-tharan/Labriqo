@@ -11,10 +11,19 @@ CREATE TABLE IF NOT EXISTS users (
     password VARCHAR(255) NOT NULL,
     department VARCHAR(120) NOT NULL,
     role ENUM('student', 'staff') NOT NULL DEFAULT 'student',
+    is_approved TINYINT(1) NOT NULL DEFAULT 1,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT users_student_id_required
         CHECK (role = 'staff' OR (student_id IS NOT NULL AND CHAR_LENGTH(TRIM(student_id)) > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS login_attempts (
+    scope_key VARCHAR(70) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    window_start BIGINT UNSIGNED NOT NULL,
+    attempts INT UNSIGNED NOT NULL DEFAULT 1,
+    PRIMARY KEY (scope_key, window_start),
+    INDEX login_attempts_window (window_start)
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS categories (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

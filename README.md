@@ -18,11 +18,11 @@ Use XAMPP with Apache, PHP 8, and the `pdo_mysql` and `mbstring` extensions. XAM
 ```powershell
 $labriqoSite = 'C:\xampp\htdocs\Labriqo'
 New-Item -ItemType Directory -Path $labriqoSite -Force | Out-Null
-Copy-Item -LiteralPath assets,config,includes,staff,student,index.php,login.php,logout.php,register.php `
+Copy-Item -LiteralPath assets,config,includes,staff,student,index.php,login.php,logout.php,register.php,.htaccess `
     -Destination $labriqoSite -Recurse -Force
 ```
 
-5. Open [Labriqo](http://localhost/Labriqo/) and select **Register** to create a student account.
+5. Open [Labriqo](http://localhost/Labriqo/) and select **Register** to create a student account. Staff verify the student ID and approve the registration from **Dashboard → Student account approvals** before the student signs in.
 
 [XAMPP for Windows documentation](https://www.apachefriends.org/faq_windows) · [MySQL constraint support](https://dev.mysql.com/doc/refman/8.0/en/create-table-check-constraints.html)
 
@@ -97,7 +97,7 @@ Start with the sample inventory in a fresh local database. Use separate browser 
 
 | Test | Expected result |
 | --- | --- |
-| Register a student, then try the same email or student ID again | Registration rejects the duplicate. The student can sign in and edit their profile. |
+| Register a student, try signing in, and have staff verify and approve the account | Sign-in is blocked until approval. Registration rejects duplicate emails and student IDs. |
 | Try a staff page while signed in as a student, then sign out and reopen the student dashboard | The staff page denies access. The student dashboard asks you to sign in again. |
 | Search for `TST-001`, then filter by Test Instruments | The Digital Multimeter appears with eight available units on a fresh import. |
 | Add equipment as staff, then try a duplicate code or negative quantity | Valid equipment appears in the catalog. Invalid changes show an error. |
@@ -203,3 +203,24 @@ For an existing database, run this once in phpMyAdmin with labriqo selected. A n
     ADD COLUMN extension_review_note VARCHAR(1000) DEFAULT NULL;
 
 Test invalid dates, empty reasons, duplicate pending requests, another student's loan, approval, rejection, and a return before review. A staff form from an earlier extension must not decide a newer request.
+
+
+## Local access and account protection
+
+This XAMPP setup permits access from the same computer. The Labriqo Apache rules block repository and SQL files, turn off directory listings, and send PHP errors to the log. A network deployment needs its own HTTPS and access configuration.
+
+New student registrations wait for staff approval. Staff must verify the student ID and identity against the lab's own records before approving. Existing student accounts retain access when upgrading.
+
+Sign-in allows 10 attempts per account and 50 per IP address in each 15-minute window. Changing a password keeps the current browser signed in and ends previous sessions for that account. After upgrading, sign in again to create a session with the new checks.
+
+For an existing database, select labriqo in phpMyAdmin and run the following once. A fresh import of database.sql already includes both changes.
+
+    ALTER TABLE users ADD COLUMN is_approved TINYINT(1) NOT NULL DEFAULT 1 AFTER role;
+
+    CREATE TABLE IF NOT EXISTS login_attempts (
+        scope_key VARCHAR(70) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        window_start BIGINT UNSIGNED NOT NULL,
+        attempts INT UNSIGNED NOT NULL DEFAULT 1,
+        PRIMARY KEY (scope_key, window_start),
+        INDEX login_attempts_window (window_start)
+    ) ENGINE=InnoDB;

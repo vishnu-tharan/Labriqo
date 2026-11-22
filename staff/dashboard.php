@@ -11,21 +11,37 @@ $showPasswordForm = true;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     checkCsrf();
-    if (formValue('action') !== 'change_password') {
+    if (formValue('action') === 'approve_student') {
+        $studentId = filter_var(formValue('user_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($studentId !== false) {
+            $approval = $database->prepare("UPDATE users SET is_approved = 1 WHERE id = ? AND role = 'student' AND is_approved = 0");
+            $approval->execute([$studentId]);
+            if ($approval->rowCount() === 1) {
+                $_SESSION['notice'] = 'Student account approved.';
+                redirect('dashboard.php#student-approvals');
+            }
+        }
+        $errors[] = 'This student account is no longer awaiting approval.';
+    } elseif (formValue('action') === 'change_password') {
+        $errors = changePassword(
+            $user['id'], formValue('current_password'), formValue('new_password'), formValue('confirm_password')
+        );
+
+        if ($errors === []) {
+            $_SESSION['notice'] = 'Password changed.';
+            redirect('dashboard.php');
+        }
+    } else {
         http_response_code(400);
         exit('Choose a valid account action.');
     }
-
-    $errors = changePassword(
-        $user['id'], formValue('current_password'), formValue('new_password'), formValue('confirm_password')
-    );
-
-    if ($errors === []) {
-        $_SESSION['notice'] = 'Password changed.';
-        redirect('dashboard.php');
-    }
 }
 
+
+$pendingStudents = $database->query(
+    "SELECT id, name, student_id, email, department FROM users
+     WHERE role = 'student' AND is_approved = 0 ORDER BY created_at, id"
+)->fetchAll();
 
 $inventory = $database->query(
     'SELECT COUNT(*) AS equipment_types, COALESCE(SUM(total_quantity), 0) AS total_units
@@ -77,6 +93,46 @@ require __DIR__ . '/../includes/header.php';
         </div>
     <?php endforeach; ?>
 </dl>
+
+<section id="student-approvals" class="panel dashboard-heading" aria-labelledby="approval-title">
+    <h2 id="approval-title">Student account approvals</h2>
+    <?php if ($pendingStudents === []): ?>
+        <p>No student accounts are awaiting approval.</p>
+    <?php else: ?>
+        <p>Verify each student's identity against your student records before approving.</p>
+        <div class="table-scroll" tabindex="0" role="region" aria-labelledby="approval-title">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Student ID</th>
+                        <th scope="col">Name</th>
+                        <th scope="col">Email</th>
+                        <th scope="col">Department</th>
+                        <th scope="col">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($pendingStudents as $student): ?>
+                        <tr>
+                            <th scope="row"><?= escape($student['student_id']) ?></th>
+                            <td><?= escape($student['name']) ?></td>
+                            <td><?= escape($student['email']) ?></td>
+                            <td><?= escape($student['department']) ?></td>
+                            <td>
+                                <form method="post" action="dashboard.php#student-approvals">
+                                    <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
+                                    <input type="hidden" name="action" value="approve_student">
+                                    <input type="hidden" name="user_id" value="<?= (int) $student['id'] ?>">
+                                    <button class="button" type="submit">Approve account</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</section>
 
 <section aria-labelledby="return-title">
     <div class="page-actions dashboard-section-heading">

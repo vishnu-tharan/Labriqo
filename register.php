@@ -43,12 +43,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($errors === []) {
         try {
             $statement = db()->prepare(
-                "INSERT INTO users (student_id, name, email, password, department, role)
-                VALUES (?, ?, ?, ?, ?, 'student')"
+                "INSERT INTO users (student_id, name, email, password, department, role, is_approved)
+                VALUES (?, ?, ?, ?, ?, 'student', 0)"
             );
             $statement->execute([$studentId, $name, $email, password_hash($password, PASSWORD_DEFAULT), $department]);
 
-            $_SESSION['notice'] = 'Student account created. You can sign in now.';
+            $_SESSION['notice'] = 'Student account created. Staff must verify your student ID and approve your account before you can sign in.';
             redirect('login.php');
         } catch (PDOException $exception) {
             if (($exception->errorInfo[1] ?? null) !== 1062) {
