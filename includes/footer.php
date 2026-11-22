@@ -18,9 +18,17 @@
             <div><dt>Equipment</dt><dd><?= escape($borrowingSlip['equipment_name']) ?></dd></div>
             <div><dt>Equipment code</dt><dd><?= escape($borrowingSlip['equipment_code']) ?></dd></div>
             <div><dt>Quantity issued</dt><dd><?= (int) $borrowingSlip['quantity'] ?></dd></div>
+            <?php if ($borrowingSlip['asset_tags'] !== null): ?>
+                <div><dt>Asset tags</dt><dd><?= escape($borrowingSlip['asset_tags']) ?></dd></div>
+            <?php endif; ?>
             <div><dt>Issued on</dt><dd><?= escape($borrowingSlip['issue_date'] ?? 'Not recorded') ?></dd></div>
             <div><dt>Return due date</dt><dd><?= escape($borrowingSlip['due_date'] ?? 'Not recorded') ?></dd></div>
             <div><dt>Returned on</dt><dd><?= escape($borrowingSlip['return_date'] ?? 'Awaiting return') ?></dd></div>
+        </dl>
+        <h2>Equipment condition</h2>
+        <dl class="details">
+            <div><dt>At issue</dt><dd><?= escape($borrowingSlip['issue_condition'] ?? 'Not recorded') ?></dd></div>
+            <div><dt>At return</dt><dd><?= escape($borrowingSlip['return_condition'] ?? 'Not recorded') ?></dd></div>
         </dl>
         <h2>Borrowing reason</h2>
         <p class="request-reason"><?= escape($borrowingSlip['reason']) ?></p>

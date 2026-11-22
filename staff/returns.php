@@ -2,7 +2,7 @@
 
 require_once __DIR__ . '/../includes/auth.php';
 
-function recordReturn(PDO $database, int $requestId, int $returnedQuantity): void
+function recordReturn(PDO $database, int $requestId, int $returnedQuantity, string $condition, string $assetTags): void
 {
     $lookup = $database->prepare('SELECT equipment_id FROM borrow_requests WHERE id = ?');
     $lookup->execute([$requestId]);
@@ -16,7 +16,7 @@ function recordReturn(PDO $database, int $requestId, int $returnedQuantity): voi
 
     try {
         // Follow the same lock order as approval and inventory removal.
-        $stock = $database->prepare('SELECT total_quantity, available_quantity FROM equipment WHERE id = ? FOR UPDATE');
+        $stock = $database->prepare('SELECT total_quantity, available_quantity, tracks_assets FROM equipment WHERE id = ? FOR UPDATE');
         $stock->execute([$equipmentId]);
         $item = $stock->fetch();
 
@@ -37,13 +37,35 @@ function recordReturn(PDO $database, int $requestId, int $returnedQuantity): voi
             throw new DomainException('The current stock count does not allow this return. Check the equipment inventory.');
         }
 
+        if ($item['tracks_assets']) {
+            $issued = $database->prepare(
+                'SELECT asset_tag FROM equipment_assets WHERE equipment_id = ? AND current_request_id = ?'
+            );
+            $issued->execute([$equipmentId, $requestId]);
+            $expected = $issued->fetchAll(PDO::FETCH_COLUMN);
+            $confirmed = array_map('trim', explode(',', $assetTags));
+            sort($expected, SORT_STRING);
+            sort($confirmed, SORT_STRING);
+            if ($confirmed !== $expected) {
+                throw new DomainException('Enter the exact tags of all units issued on this loan.');
+            }
+
+            $release = $database->prepare(
+                'UPDATE equipment_assets SET current_request_id = NULL WHERE equipment_id = ? AND current_request_id = ?'
+            );
+            $release->execute([$equipmentId, $requestId]);
+            if ($release->rowCount() !== $returnedQuantity) {
+                throw new DomainException('The tagged assets do not match the issued quantity.');
+            }
+        }
+
         $restock = $database->prepare('UPDATE equipment SET available_quantity = available_quantity + ? WHERE id = ?');
         $restock->execute([$returnedQuantity, $equipmentId]);
 
         $returned = $database->prepare(
-            "UPDATE borrow_requests SET status = 'returned', return_date = CURRENT_DATE() WHERE id = ?"
+            "UPDATE borrow_requests SET status = 'returned', return_date = CURRENT_DATE(), return_condition = ? WHERE id = ?"
         );
-        $returned->execute([$requestId]);
+        $returned->execute([$condition, $requestId]);
 
         $closeExtension = $database->prepare(
             "UPDATE borrow_requests SET extension_status = 'cancelled', extension_decided_at = CURRENT_TIMESTAMP(),
@@ -72,11 +94,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $requestId = filter_var(formValue('request_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     $quantity = filter_var(formValue('returned_quantity'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 
+    $condition = trim(formValue('return_condition'));
     if ($requestId === false || $quantity === false) {
         $errors[] = 'Choose an active loan and enter a whole returned quantity of at least 1.';
+    } elseif (!validText($condition, 1000)) {
+        $errors[] = 'Enter the condition at return, up to 1,000 characters.';
     } else {
         try {
-            recordReturn($database, $requestId, $quantity);
+            recordReturn($database, $requestId, $quantity, $condition, formValue('asset_tags'));
             $_SESSION['notice'] = 'Return recorded. The units are available again.';
             redirect('returns.php');
         } catch (DomainException $exception) {
@@ -94,7 +119,9 @@ if ($studentId !== '' && !validText($studentId, 30)) {
 } else {
     $statement = $database->prepare(
         "SELECT r.id, r.quantity, r.due_date, DATEDIFF(CURRENT_DATE(), r.due_date) AS days_overdue,
-                u.name AS student_name, u.student_id, e.name AS equipment_name, e.equipment_code
+                u.name AS student_name, u.student_id, e.name AS equipment_name, e.equipment_code,
+                (SELECT GROUP_CONCAT(a.asset_tag ORDER BY a.asset_tag SEPARATOR ', ')
+                 FROM loan_assets x JOIN equipment_assets a ON a.id = x.asset_id WHERE x.request_id = r.id) AS asset_tags
          FROM borrow_requests r
          JOIN users u ON r.user_id = u.id
          JOIN equipment e ON r.equipment_id = e.id
@@ -154,6 +181,9 @@ require __DIR__ . '/../includes/header.php';
                         <td>
                             <?= escape($loan['equipment_name']) ?>
                             <small class="table-note"><?= escape($loan['equipment_code']) ?></small>
+                            <?php if ($loan['asset_tags'] !== null): ?>
+                                <small class="table-note">Verify tags <?= escape($loan['asset_tags']) ?></small>
+                            <?php endif; ?>
                         </td>
                         <td><?= (int) $loan['quantity'] ?></td>
                         <td>
@@ -178,6 +208,12 @@ require __DIR__ . '/../includes/header.php';
                                 <label for="quantity-<?= (int) $loan['id'] ?>">Returned quantity</label>
                                 <input id="quantity-<?= (int) $loan['id'] ?>" name="returned_quantity" type="number"
                                        min="<?= (int) $loan['quantity'] ?>" max="<?= (int) $loan['quantity'] ?>" required>
+                                <label for="return-condition-<?= (int) $loan['id'] ?>">Condition at return</label>
+                                <textarea id="return-condition-<?= (int) $loan['id'] ?>" name="return_condition" rows="2" maxlength="1000" required></textarea>
+                                <?php if ($loan['asset_tags'] !== null): ?>
+                                    <label for="return-assets-<?= (int) $loan['id'] ?>">Returned asset tags, separated by commas</label>
+                                    <input id="return-assets-<?= (int) $loan['id'] ?>" name="asset_tags" required>
+                                <?php endif; ?>
                                 <button class="button" type="submit">Confirm return</button>
                             </form>
                         </td>

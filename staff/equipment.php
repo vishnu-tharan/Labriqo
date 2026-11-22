@@ -10,7 +10,7 @@ function findActiveEquipment(PDO $database, int $id, bool $lock = false): array|
     return $statement->fetch();
 }
 
-function saveEquipment(PDO $database, array $fields, ?int $id): void
+function saveEquipment(PDO $database, array $fields, ?int $id, int $staffId, string $reason): void
 {
     $fields['available_quantity'] = $fields['total_quantity'];
 
@@ -22,6 +22,9 @@ function saveEquipment(PDO $database, array $fields, ?int $id): void
                 (:equipment_code, :name, :category_id, :description, :total_quantity, :available_quantity, :location, :image_url, :is_under_maintenance)'
         );
         $statement->execute($fields);
+        if ($fields['total_quantity'] > 0) {
+            recordStockAdjustment($database, (int) $database->lastInsertId(), $staffId, 0, $fields['total_quantity'], 'Initial inventory');
+        }
         return;
     }
 
@@ -31,10 +34,20 @@ function saveEquipment(PDO $database, array $fields, ?int $id): void
         throw new DomainException('This equipment record is no longer active.');
     }
 
+    if ($item['tracks_assets'] && $fields['total_quantity'] !== (int) $item['total_quantity']) {
+        throw new DomainException('Add or retire tagged assets to change the total quantity.');
+    }
+
     // Read the current stock under the lock so an edit preserves units already issued.
     $checkedOut = $item['total_quantity'] - $item['available_quantity'];
     if ($fields['total_quantity'] < $checkedOut) {
-        throw new DomainException("Total quantity must cover the {$checkedOut} units already checked out.");
+        throw new DomainException("Total quantity must cover the {$checkedOut} units already issued or reserved.");
+    }
+
+    $waiting = $database->prepare("SELECT MAX(quantity) FROM borrow_requests WHERE equipment_id = ? AND status = 'waitlisted'");
+    $waiting->execute([$id]);
+    if ($fields['total_quantity'] < (int) $waiting->fetchColumn()) {
+        throw new DomainException('Resolve waitlisted requests for more units before reducing the total stock.');
     }
 
     $fields['available_quantity'] -= $checkedOut;
@@ -47,6 +60,97 @@ function saveEquipment(PDO $database, array $fields, ?int $id): void
          WHERE id = :id'
     );
     $statement->execute($fields);
+    if ($fields['total_quantity'] !== (int) $item['total_quantity']) {
+        if (!validText($reason, 500)) {
+            throw new DomainException('Enter a stock adjustment reason of up to 500 characters.');
+        }
+        recordStockAdjustment($database, $id, $staffId, (int) $item['total_quantity'], $fields['total_quantity'], $reason);
+    }
+}
+
+function recordStockAdjustment(PDO $database, int $equipmentId, int $staffId, int $before, int $after, string $reason): void
+{
+    $statement = $database->prepare(
+        'INSERT INTO stock_adjustments (equipment_id, staff_id, previous_total, new_total, reason)
+         VALUES (?, ?, ?, ?, ?)'
+    );
+    $statement->execute([$equipmentId, $staffId, $before, $after, $reason]);
+}
+
+function changeAssets(PDO $database, int $equipmentId, int $staffId, string $action): string
+{
+    $item = findActiveEquipment($database, $equipmentId, true);
+    if ($item === false) {
+        throw new DomainException('This equipment is no longer active.');
+    }
+
+    $rawTags = trim(formValue('asset_tags'));
+    if (!mb_check_encoding($rawTags, 'UTF-8')) {
+        throw new DomainException('Enter valid asset tags.');
+    }
+    $tags = array_values(array_filter(array_map('trim', preg_split('/\R/u', $rawTags) ?: []), static fn ($tag) => $tag !== ''));
+    $add = $database->prepare('INSERT INTO equipment_assets (equipment_id, asset_tag) VALUES (?, ?)');
+
+    if ($action === 'enable_assets') {
+        if ($item['tracks_assets'] || $item['available_quantity'] !== $item['total_quantity']) {
+            throw new DomainException('Start asset tracking when all units are in stock and no pickups are reserved.');
+        }
+        if (count($tags) !== (int) $item['total_quantity']) {
+            throw new DomainException('Enter one distinct asset tag for each unit in stock.');
+        }
+        foreach ($tags as $tag) {
+            if (!validText($tag, 80) || str_contains($tag, ',')) {
+                throw new DomainException('Each tag must contain 1 to 80 characters and no commas.');
+            }
+            $add->execute([$equipmentId, $tag]);
+        }
+        $database->prepare('UPDATE equipment SET tracks_assets = 1 WHERE id = ?')->execute([$equipmentId]);
+        return 'Asset tracking enabled.';
+    }
+
+    $reason = trim(formValue('stock_reason'));
+    if (!$item['tracks_assets'] || !validText($reason, 500)) {
+        throw new DomainException('Enter a reason of up to 500 characters for this stock adjustment.');
+    }
+
+    if ($action === 'add_asset') {
+        if (count($tags) !== 1 || !validText($tags[0], 80) || str_contains($tags[0], ',')) {
+            throw new DomainException('Enter one asset tag of up to 80 characters with no commas.');
+        }
+        if ((int) $item['total_quantity'] === 2147483647) {
+            throw new DomainException('This equipment is already at the maximum quantity.');
+        }
+        $add->execute([$equipmentId, $tags[0]]);
+        $change = 1;
+    } elseif ($action === 'retire_asset') {
+        $assetId = filter_var(formValue('asset_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($assetId === false || $item['available_quantity'] < 1) {
+            throw new DomainException('Only available units can be retired.');
+        }
+        $waiting = $database->prepare("SELECT MAX(quantity) FROM borrow_requests WHERE equipment_id = ? AND status = 'waitlisted'");
+        $waiting->execute([$equipmentId]);
+        if ((int) $item['total_quantity'] - 1 < (int) $waiting->fetchColumn()) {
+            throw new DomainException('Resolve larger waitlisted requests before retiring this asset.');
+        }
+        $retire = $database->prepare(
+            'UPDATE equipment_assets SET retired_at = CURRENT_TIMESTAMP() WHERE id = ? AND equipment_id = ?
+             AND retired_at IS NULL AND current_request_id IS NULL'
+        );
+        $retire->execute([$assetId, $equipmentId]);
+        if ($retire->rowCount() !== 1) {
+            throw new DomainException('This asset is no longer available to retire.');
+        }
+        $change = -1;
+    } else {
+        throw new DomainException('Choose a valid asset action.');
+    }
+
+    $adjust = $database->prepare(
+        'UPDATE equipment SET total_quantity = total_quantity + ?, available_quantity = available_quantity + ? WHERE id = ?'
+    );
+    $adjust->execute([$change, $change, $equipmentId]);
+    recordStockAdjustment($database, $equipmentId, $staffId, (int) $item['total_quantity'], (int) $item['total_quantity'] + $change, $reason);
+    return $change > 0 ? 'Asset added.' : 'Asset retired.';
 }
 
 function removeEquipment(PDO $database, int $id): string
@@ -59,7 +163,7 @@ function removeEquipment(PDO $database, int $id): string
 
     $activeRequest = $database->prepare(
         "SELECT id FROM borrow_requests
-         WHERE equipment_id = ? AND status IN ('pending', 'borrowed')
+         WHERE equipment_id = ? AND status IN ('pending', 'borrowed', 'waitlisted', 'reserved')
          LIMIT 1 FOR UPDATE"
     );
     $activeRequest->execute([$id]);
@@ -71,9 +175,12 @@ function removeEquipment(PDO $database, int $id): string
     $history = $database->prepare('SELECT id FROM borrow_requests WHERE equipment_id = ? LIMIT 1');
     $history->execute([$id]);
 
-    if ($history->fetchColumn() !== false) {
+    $adjustments = $database->prepare('SELECT id FROM stock_adjustments WHERE equipment_id = ? LIMIT 1');
+    $adjustments->execute([$id]);
+
+    if ($item['tracks_assets'] || $history->fetchColumn() !== false || $adjustments->fetchColumn() !== false) {
         $database->prepare('UPDATE equipment SET is_active = 0 WHERE id = ?')->execute([$id]);
-        return 'Equipment archived. Its borrowing history is still available.';
+        return 'Equipment archived. Its history is still available.';
     }
 
     $database->prepare('DELETE FROM equipment WHERE id = ?')->execute([$id]);
@@ -87,15 +194,21 @@ $database = db();
 $errors = [];
 
 $mode = queryValue('mode');
-if (!in_array($mode, ['add', 'edit', 'remove', 'categories'], true)) {
+if (!in_array($mode, ['add', 'edit', 'remove', 'categories', 'stock_history', 'assets'], true)) {
     $mode = 'list';
 }
 
 $id = null;
 $item = false;
-if ($mode === 'edit' || $mode === 'remove') {
+if (in_array($mode, ['edit', 'remove', 'assets'], true)) {
     $id = filter_var(queryValue('id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-    $item = $id === false ? false : findActiveEquipment($database, $id);
+    if ($mode === 'assets' && $id !== false) {
+        $assetEquipment = $database->prepare('SELECT * FROM equipment WHERE id = ?');
+        $assetEquipment->execute([$id]);
+        $item = $assetEquipment->fetch();
+    } else {
+        $item = $id === false ? false : findActiveEquipment($database, $id);
+    }
 
     if ($item === false) {
         http_response_code(404);
@@ -167,7 +280,7 @@ if ($mode === 'edit') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
-    if ($mode === 'list') {
+    if (in_array($mode, ['list', 'stock_history'], true)) {
         header('Allow: GET');
         http_response_code(405);
         exit('Open the equipment form before submitting changes.');
@@ -175,7 +288,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
 
     checkCsrf();
 
-    if ($mode !== 'remove') {
+    if (!in_array($mode, ['remove', 'assets'], true)) {
         foreach ($fields as $field => $value) {
             $fields[$field] = trim(formValue($field));
         }
@@ -227,18 +340,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
         try {
             if ($mode === 'remove') {
                 $notice = removeEquipment($database, $id);
+            } elseif ($mode === 'assets') {
+                $notice = changeAssets($database, $id, $user['id'], formValue('action'));
             } else {
                 $equipmentFields = $fields;
                 $equipmentFields['category_id'] = $categoryId;
                 $equipmentFields['total_quantity'] = $quantity;
                 $equipmentFields['image_url'] = $imageUrl === '' ? null : $imageUrl;
-                saveEquipment($database, $equipmentFields, $id);
+                saveEquipment($database, $equipmentFields, $id, $user['id'], trim(formValue('stock_reason')));
                 $notice = $mode === 'add' ? 'Equipment added.' : 'Equipment updated.';
             }
 
             $database->commit();
             $_SESSION['notice'] = $notice;
-            redirect('equipment.php');
+            redirect($mode === 'assets' ? 'equipment.php?mode=assets&id=' . $id : 'equipment.php');
         } catch (Throwable $exception) {
             if ($database->inTransaction()) {
                 $database->rollBack();
@@ -247,7 +362,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
             if ($exception instanceof DomainException) {
                 $errors[] = $exception->getMessage();
             } elseif ($exception instanceof PDOException && ($exception->errorInfo[1] ?? null) === 1062) {
-                $errors[] = 'That equipment code is already in use.';
+                $errors[] = $mode === 'assets' ? 'An asset tag is already in use.' : 'That equipment code is already in use.';
             } else {
                 throw $exception;
             }
@@ -293,6 +408,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $mode === 'list'
     ], $equipment);
 }
 
+if ($mode === 'assets') {
+    $statement = $database->prepare(
+        'SELECT id, asset_tag, current_request_id, retired_at FROM equipment_assets
+         WHERE equipment_id = ? ORDER BY retired_at IS NOT NULL, asset_tag'
+    );
+    $pagination = paginate($database, $statement, [$id]);
+    $assets = $pagination['records'];
+    $selectedAsset = filter_var(queryValue('asset'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    $assetHistory = [];
+    if ($selectedAsset !== false) {
+        $history = $database->prepare(
+            'SELECT r.id, r.issue_date, r.return_date, r.issue_condition, r.return_condition, a.asset_tag
+             FROM loan_assets x JOIN equipment_assets a ON a.id = x.asset_id
+             JOIN borrow_requests r ON r.id = x.request_id
+             WHERE a.id = ? AND a.equipment_id = ? ORDER BY r.id DESC'
+        );
+        $history->execute([$selectedAsset, $id]);
+        $assetHistory = $history->fetchAll();
+    }
+}
+
+if ($mode === 'stock_history') {
+    $statement = $database->prepare(
+        'SELECT a.id, a.previous_total, a.new_total, a.reason, a.adjusted_at, e.name AS equipment_name, u.name AS staff_name
+         FROM stock_adjustments a JOIN equipment e ON e.id = a.equipment_id JOIN users u ON u.id = a.staff_id
+         ORDER BY a.id DESC'
+    );
+    $pagination = paginate($database, $statement, []);
+    $adjustments = $pagination['records'];
+}
+
 require __DIR__ . '/../includes/header.php';
 ?>
 <?php if ($mode === 'list'): ?>
@@ -300,6 +446,7 @@ require __DIR__ . '/../includes/header.php';
         <h1>Equipment inventory</h1>
         <div class="form-actions">
             <a href="equipment.php?mode=categories">Manage categories</a>
+            <a href="equipment.php?mode=stock_history">Stock history</a>
             <a class="button" href="equipment.php?mode=add">Add equipment</a>
         </div>
     </div>
@@ -359,13 +506,112 @@ require __DIR__ . '/../includes/header.php';
                                     <div class="row-actions">
                                         <a href="equipment.php?mode=edit&amp;id=<?= (int) $row['id'] ?>"
                                            aria-label="<?= escape('Edit ' . $row['name']) ?>">Edit</a>
+                                        <a href="equipment.php?mode=assets&amp;id=<?= (int) $row['id'] ?>">Assets</a>
                                         <a class="danger-link" href="equipment.php?mode=remove&amp;id=<?= (int) $row['id'] ?>"
                                            aria-label="<?= escape('Remove ' . $row['name']) ?>">Remove</a>
                                     </div>
                                 <?php else: ?>
                                     <span class="status status-archived">Archived</span>
+                                    <?php if ($row['tracks_assets']): ?>
+                                        <a href="equipment.php?mode=assets&amp;id=<?= (int) $row['id'] ?>">Asset history</a>
+                                    <?php endif; ?>
                                 <?php endif; ?>
                             </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+<?php elseif ($mode === 'assets'): ?>
+    <div class="page-heading page-actions">
+        <h1><?= escape($item['name']) ?> assets</h1>
+        <a href="equipment.php">Back to inventory</a>
+    </div>
+    <?php if ($item['is_active']): ?>
+        <form method="post" class="panel form-panel form-stack">
+            <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
+            <input type="hidden" name="action" value="<?= $item['tracks_assets'] ? 'add_asset' : 'enable_assets' ?>">
+            <div class="field">
+                <label for="asset-tags"><?= $item['tracks_assets'] ? 'New asset tag' : 'Asset tags (one per line)' ?></label>
+                <textarea id="asset-tags" name="asset_tags" rows="3"><?= escape(formValue('asset_tags')) ?></textarea>
+                <?php if (!$item['tracks_assets']): ?>
+                    <small>When all units are in stock, enter one tag for each of the <?= (int) $item['total_quantity'] ?> units.</small>
+                <?php endif; ?>
+            </div>
+            <?php if ($item['tracks_assets']): ?>
+                <div class="field">
+                    <label for="asset-stock-reason">Reason for adding this asset</label>
+                    <input id="asset-stock-reason" name="stock_reason" maxlength="500" required>
+                </div>
+            <?php endif; ?>
+            <button class="button" type="submit"><?= $item['tracks_assets'] ? 'Add asset' : 'Enable asset tracking' ?></button>
+        </form>
+    <?php endif; ?>
+    <?php if ($assets !== []): ?>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Tagged equipment units">
+            <table>
+                <thead><tr><th>Asset tag</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>
+                    <?php foreach ($assets as $asset): ?>
+                        <tr>
+                            <th scope="row"><?= escape($asset['asset_tag']) ?></th>
+                            <td><?= $asset['retired_at'] !== null ? 'Retired' : ($asset['current_request_id'] !== null ? 'Issued' : 'In storage') ?></td>
+                            <td>
+                                <a href="equipment.php?mode=assets&amp;id=<?= (int) $id ?>&amp;asset=<?= (int) $asset['id'] ?>#asset-loans">Loan history</a>
+                                <?php if ($item['is_active'] && $asset['retired_at'] === null && $asset['current_request_id'] === null && $item['available_quantity'] > 0): ?>
+                                    <form method="post" class="loan-action">
+                                        <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
+                                        <input type="hidden" name="action" value="retire_asset">
+                                        <input type="hidden" name="asset_id" value="<?= (int) $asset['id'] ?>">
+                                        <label for="retire-reason-<?= (int) $asset['id'] ?>">Reason for retirement</label>
+                                        <input id="retire-reason-<?= (int) $asset['id'] ?>" name="stock_reason" maxlength="500" required>
+                                        <button class="button button-danger" type="submit">Retire asset</button>
+                                    </form>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+    <?php if ($selectedAsset !== false): ?>
+        <section id="asset-loans" class="panel">
+            <h2>Asset loan history</h2>
+            <?php if ($assetHistory === []): ?>
+                <p>No loans are recorded for this asset.</p>
+            <?php else: ?>
+                <?php foreach ($assetHistory as $loan): ?>
+                    <p><?= escape($loan['asset_tag']) ?> ·
+                        <a href="requests.php?slip=<?= (int) $loan['id'] ?>">Borrowing slip #<?= (int) $loan['id'] ?></a> ·
+                        Issued <?= escape($loan['issue_date'] ?? 'Not recorded') ?> ·
+                        Returned <?= escape($loan['return_date'] ?? 'Awaiting return') ?>
+                    </p>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </section>
+    <?php endif; ?>
+<?php elseif ($mode === 'stock_history'): ?>
+    <div class="page-heading page-actions">
+        <h1>Stock adjustment history</h1>
+        <a href="equipment.php">Back to inventory</a>
+    </div>
+    <?php if ($adjustments === []): ?>
+        <p class="panel">No stock adjustments have been recorded.</p>
+    <?php else: ?>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Stock adjustment history">
+            <table>
+                <thead><tr><th>Equipment</th><th>Previous total</th><th>New total</th><th>Reason</th><th>Staff</th><th>Date</th></tr></thead>
+                <tbody>
+                    <?php foreach ($adjustments as $entry): ?>
+                        <tr>
+                            <th scope="row"><?= escape($entry['equipment_name']) ?></th>
+                            <td><?= (int) $entry['previous_total'] ?></td>
+                            <td><?= (int) $entry['new_total'] ?></td>
+                            <td><?= escape($entry['reason']) ?></td>
+                            <td><?= escape($entry['staff_name']) ?></td>
+                            <td><?= escape($entry['adjusted_at']) ?></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -462,6 +708,13 @@ require __DIR__ . '/../includes/header.php';
                 </div>
             </div>
 
+            <?php if ($mode === 'edit'): ?>
+                <div class="field">
+                    <label for="stock-reason">Reason for changing total stock</label>
+                    <textarea id="stock-reason" name="stock_reason" rows="2" maxlength="500"><?= escape(formValue('stock_reason')) ?></textarea>
+                    <small>Required when the total quantity changes.</small>
+                </div>
+            <?php endif; ?>
             <div class="field">
                 <label for="location">Storage location</label>
                 <input id="location" name="location" maxlength="120" value="<?= escape($fields['location']) ?>" required>

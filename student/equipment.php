@@ -41,6 +41,7 @@ if ($detailView) {
     if ($item === false) {
         http_response_code(404);
     } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $joinWaitlist = formValue('action') === 'waitlist';
         $quantityInput = trim(formValue('quantity'));
         $reason = trim(formValue('reason'));
         $preferredDate = formValue('preferred_date');
@@ -78,12 +79,25 @@ if ($detailView) {
                     $item['today'] = $current['today'];
 
                     $item['is_under_maintenance'] = $current['is_under_maintenance'];
+                    $queued = $database->prepare(
+                        "SELECT COUNT(*) AS waiting, COUNT(CASE WHEN user_id = ? THEN 1 END) AS already_waiting
+                         FROM borrow_requests WHERE equipment_id = ? AND status = 'waitlisted'"
+                    );
+                    $queued->execute([$user['id'], $id]);
+                    $waitlist = $queued->fetch();
+
                     if ($current['is_under_maintenance']) {
                         $errors[] = 'This equipment is under maintenance.';
                     } elseif ($quantity + borrowedUnits($database, $user['id']) > MAX_BORROWED_UNITS) {
                         $errors[] = 'This request exceeds the student borrowing limit of ' . MAX_BORROWED_UNITS . ' units.';
-                    } elseif ($quantity > $current['available_quantity']) {
-                        $errors[] = 'The requested quantity exceeds the available stock.';
+                    } elseif ($joinWaitlist && $quantity > $current['total_quantity']) {
+                        $errors[] = 'The requested quantity exceeds the total stock.';
+                    } elseif ($joinWaitlist && $waitlist['already_waiting'] > 0) {
+                        $errors[] = 'You already have a request on the waitlist for this equipment.';
+                    } elseif ($joinWaitlist && $waitlist['waiting'] == 0 && $quantity <= $current['available_quantity']) {
+                        $errors[] = 'This quantity is available. Submit a regular request.';
+                    } elseif (!$joinWaitlist && ($quantity > $current['available_quantity'] || $waitlist['waiting'] > 0)) {
+                        $errors[] = 'The quantity is unavailable for a regular request. You can join the waitlist.';
                     } elseif ($preferredDate < $current['today']) {
                         $errors[] = 'Choose a preferred borrowing date of today or later.';
                     }
@@ -91,13 +105,13 @@ if ($detailView) {
 
                 if ($errors === []) {
                     $request = $database->prepare(
-                        'INSERT INTO borrow_requests (user_id, equipment_id, quantity, reason, preferred_date)
-                         VALUES (?, ?, ?, ?, ?)'
+                        'INSERT INTO borrow_requests (user_id, equipment_id, quantity, reason, preferred_date, status)
+                         VALUES (?, ?, ?, ?, ?, ?)'
                     );
-                    $request->execute([$user['id'], $id, $quantity, $reason, $preferredDate]);
+                    $request->execute([$user['id'], $id, $quantity, $reason, $preferredDate, $joinWaitlist ? 'waitlisted' : 'pending']);
                     $database->commit();
 
-                    $_SESSION['notice'] = 'Request submitted. It is pending staff review.';
+                    $_SESSION['notice'] = $joinWaitlist ? 'You joined the waitlist.' : 'Request submitted. It is pending staff review.';
                     redirect('requests.php');
                 }
 
@@ -175,10 +189,10 @@ require __DIR__ . '/../includes/header.php';
             </div>
         </article>
 
-        <?php if (!$item['is_under_maintenance'] && $item['available_quantity'] > 0): ?>
+        <?php if (!$item['is_under_maintenance'] && $item['total_quantity'] > 0): ?>
             <section class="panel request-panel" aria-labelledby="request-title">
                 <h2 id="request-title">Request equipment</h2>
-                <p>You currently hold <?= (int) $currentBorrowedUnits ?> of the <?= MAX_BORROWED_UNITS ?> units allowed per student.</p>
+                <p>You have <?= (int) $currentBorrowedUnits ?> of your <?= MAX_BORROWED_UNITS ?> units borrowed or reserved.</p>
                 <form method="post" class="form-stack">
                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
 
@@ -186,7 +200,7 @@ require __DIR__ . '/../includes/header.php';
                         <div class="field">
                             <label for="quantity">Quantity</label>
                             <input id="quantity" name="quantity" type="number" min="1"
-                                   max="<?= (int) $item['available_quantity'] ?>"
+                                   max="<?= (int) $item['total_quantity'] ?>"
                                    value="<?= escape($quantityInput) ?>" required>
                         </div>
                         <div class="field">
@@ -200,7 +214,10 @@ require __DIR__ . '/../includes/header.php';
                         <label for="reason">Borrowing reason</label>
                         <textarea id="reason" name="reason" rows="3" maxlength="1000" required><?= escape($reason) ?></textarea>
                     </div>
-                    <button class="button" type="submit">Submit request</button>
+                    <div class="form-actions">
+                        <button class="button" type="submit">Submit request</button>
+                        <button class="button" type="submit" name="action" value="waitlist">Join waitlist</button>
+                    </div>
                 </form>
             </section>
         <?php endif; ?>

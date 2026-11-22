@@ -61,6 +61,9 @@ $errors = [];
 $statusOptions = [
     'all' => 'All statuses',
     'pending' => 'Pending',
+    'waitlisted' => 'Waitlisted',
+    'reserved' => 'Awaiting collection',
+    'expired' => 'Collection expired',
     'borrowed' => 'Borrowed',
     'overdue' => 'Overdue',
     'returned' => 'Returned',
@@ -97,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') !== 'extension'
     if ($requestId !== false) {
         $cancel = $database->prepare(
             "UPDATE borrow_requests SET status = 'cancelled'
-             WHERE id = ? AND user_id = ? AND status = 'pending'"
+             WHERE id = ? AND user_id = ? AND status IN ('pending', 'waitlisted')"
         );
         $cancel->execute([$requestId, $user['id']]);
 
@@ -112,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') !== 'extension'
         }
     }
 
-    $errors[] = 'This request could not be cancelled. Only your pending requests can be cancelled.';
+    $errors[] = 'This request could not be cancelled. Only your pending or waitlisted requests can be cancelled.';
 }
 
 $equipmentStatement = $database->prepare(
@@ -125,7 +128,10 @@ $equipmentStatement->execute([$user['id']]);
 $equipmentOptions = $equipmentStatement->fetchAll();
 
 $statement = $database->prepare(
-    "SELECT r.id, r.equipment_id, r.quantity, r.status, DATE(r.request_date) AS requested_on,
+    "SELECT r.id, r.equipment_id, r.quantity, r.status, r.collection_deadline,
+            (SELECT COUNT(*) + 1 FROM borrow_requests w WHERE w.equipment_id = r.equipment_id
+                AND w.status = 'waitlisted' AND w.id < r.id) AS queue_position,
+            DATE(r.request_date) AS requested_on,
             r.extension_due_date, r.extension_reason, r.extension_status, r.extension_review_note,
             r.preferred_date, r.issue_date, r.due_date, r.return_date, r.rejection_reason, e.name, e.equipment_code, e.is_active,
             (r.status = 'borrowed' AND r.due_date < CURRENT_DATE()) AS is_overdue
@@ -204,6 +210,9 @@ require __DIR__ . '/../includes/header.php';
                         <td>
                             <div>Requested <time><?= escape($request['requested_on']) ?></time></div>
                             <div>Preferred <time><?= escape($request['preferred_date']) ?></time></div>
+                            <?php if ($request['collection_deadline'] !== null && in_array($request['status'], ['reserved', 'expired'], true)): ?>
+                                <div>Collect by <time><?= escape($request['collection_deadline']) ?></time></div>
+                            <?php endif; ?>
                             <?php if ($request['issue_date'] !== null): ?>
                                 <div>Issued <time><?= escape($request['issue_date']) ?></time></div>
                             <?php endif; ?>
@@ -227,14 +236,17 @@ require __DIR__ . '/../includes/header.php';
                             <?php if ($request['is_overdue']): ?>
                                 <span class="status status-overdue">Overdue</span>
                             <?php else: ?>
-                                <span class="status status-<?= escape($request['status']) ?>"><?= escape(ucfirst($request['status'])) ?></span>
+                                <span class="status status-<?= escape($request['status']) ?>"><?= escape($statusOptions[$request['status']]) ?></span>
+                            <?php endif; ?>
+                            <?php if ($request['status'] === 'waitlisted'): ?>
+                                <small class="table-note">Position <?= (int) $request['queue_position'] ?></small>
                             <?php endif; ?>
                             <?php if ($request['status'] === 'rejected'): ?>
                                 <p class="request-reason"><?= escape($request['rejection_reason'] ?? 'No reason recorded.') ?></p>
                             <?php endif; ?>
                         </td>
                         <td>
-                            <?php if ($request['status'] === 'pending'): ?>
+                            <?php if (in_array($request['status'], ['pending', 'waitlisted'], true)): ?>
                                 <form method="post">
                                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
                                     <input type="hidden" name="request_id" value="<?= (int) $request['id'] ?>">

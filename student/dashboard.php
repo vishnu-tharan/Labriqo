@@ -157,7 +157,7 @@ require __DIR__ . '/../includes/header.php';
                                     &mdash;
                                 <?php endif; ?>
                             </td>
-                            <td><span class="status status-<?= escape($status) ?>"><?= escape(ucfirst($status)) ?></span></td>
+                            <td><span class="status status-<?= escape($status) ?>"><?= escape(match ($status) { 'reserved' => 'Awaiting collection', 'expired' => 'Collection expired', default => ucfirst($status) }) ?></span></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>

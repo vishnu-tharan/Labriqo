@@ -370,12 +370,15 @@ dd {
 }
 
 .status-archived,
-.status-cancelled {
+.status-cancelled,
+.status-expired {
     background: #eaf0f6;
     color: #3e5069;
 }
 
-.status-pending {
+.status-pending,
+.status-waitlisted,
+.status-reserved {
     background: #fff1cf;
     color: #704600;
 }

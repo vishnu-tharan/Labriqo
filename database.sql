@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS equipment (
     image_url VARCHAR(2048),
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     is_under_maintenance TINYINT(1) NOT NULL DEFAULT 0,
+    tracks_assets TINYINT(1) NOT NULL DEFAULT 0,
     CONSTRAINT equipment_maintenance_value CHECK (is_under_maintenance IN (0, 1)),
     CONSTRAINT equipment_category_fk FOREIGN KEY (category_id) REFERENCES categories (id),
     CONSTRAINT equipment_stock_range
@@ -60,6 +61,8 @@ CREATE TABLE IF NOT EXISTS borrow_requests (
     request_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     approval_date DATE,
     issue_date DATE,
+    issue_condition VARCHAR(1000) DEFAULT NULL,
+    return_condition VARCHAR(1000) DEFAULT NULL,
     due_date DATE,
     return_date DATE,
     extension_due_date DATE DEFAULT NULL,
@@ -69,10 +72,43 @@ CREATE TABLE IF NOT EXISTS borrow_requests (
     extension_requested_at DATETIME DEFAULT NULL,
     extension_decided_at DATETIME DEFAULT NULL,
     extension_review_note VARCHAR(1000) DEFAULT NULL,
-    status ENUM('pending', 'borrowed', 'returned', 'rejected', 'cancelled') NOT NULL DEFAULT 'pending',
+    status ENUM('pending', 'borrowed', 'returned', 'rejected', 'cancelled', 'waitlisted', 'reserved', 'expired') NOT NULL DEFAULT 'pending',
+    collection_deadline DATETIME DEFAULT NULL,
+    INDEX borrow_collection_deadline (status, collection_deadline),
+    INDEX borrow_equipment_queue (equipment_id, status, id),
     CONSTRAINT borrow_requests_user_fk FOREIGN KEY (user_id) REFERENCES users (id),
     CONSTRAINT borrow_requests_equipment_fk FOREIGN KEY (equipment_id) REFERENCES equipment (id),
     CONSTRAINT borrow_requests_positive_quantity CHECK (quantity > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS equipment_assets (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    equipment_id INT UNSIGNED NOT NULL,
+    asset_tag VARCHAR(80) NOT NULL UNIQUE,
+    current_request_id INT UNSIGNED DEFAULT NULL,
+    retired_at DATETIME DEFAULT NULL,
+    CONSTRAINT assets_equipment_fk FOREIGN KEY (equipment_id) REFERENCES equipment (id),
+    CONSTRAINT assets_current_loan_fk FOREIGN KEY (current_request_id) REFERENCES borrow_requests (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS loan_assets (
+    request_id INT UNSIGNED NOT NULL,
+    asset_id INT UNSIGNED NOT NULL,
+    PRIMARY KEY (request_id, asset_id),
+    CONSTRAINT loan_assets_request_fk FOREIGN KEY (request_id) REFERENCES borrow_requests (id),
+    CONSTRAINT loan_assets_asset_fk FOREIGN KEY (asset_id) REFERENCES equipment_assets (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS stock_adjustments (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    equipment_id INT UNSIGNED NOT NULL,
+    staff_id INT UNSIGNED NOT NULL,
+    previous_total INT NOT NULL,
+    new_total INT NOT NULL,
+    reason VARCHAR(500) NOT NULL,
+    adjusted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT stock_adjustment_equipment FOREIGN KEY (equipment_id) REFERENCES equipment (id),
+    CONSTRAINT stock_adjustment_staff FOREIGN KEY (staff_id) REFERENCES users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO categories (name) VALUES

@@ -11,13 +11,18 @@ $showPasswordForm = true;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     checkCsrf();
-    if (formValue('action') === 'approve_student') {
+    if (in_array(formValue('action'), ['approve_student', 'reject_student'], true)) {
         $studentId = filter_var(formValue('user_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($studentId !== false) {
-            $approval = $database->prepare("UPDATE users SET is_approved = 1 WHERE id = ? AND role = 'student' AND is_approved = 0");
+            $rejecting = formValue('action') === 'reject_student';
+            $sql = $rejecting
+                ? "DELETE FROM users WHERE id = ? AND role = 'student' AND is_approved = 0
+                   AND NOT EXISTS (SELECT 1 FROM borrow_requests WHERE user_id = users.id)"
+                : "UPDATE users SET is_approved = 1 WHERE id = ? AND role = 'student' AND is_approved = 0";
+            $approval = $database->prepare($sql);
             $approval->execute([$studentId]);
             if ($approval->rowCount() === 1) {
-                $_SESSION['notice'] = 'Student account approved.';
+                $_SESSION['notice'] = $rejecting ? 'Registration rejected and student ID released.' : 'Student account approved.';
                 redirect('dashboard.php#student-approvals');
             }
         }
@@ -99,7 +104,7 @@ require __DIR__ . '/../includes/header.php';
     <?php if ($pendingStudents === []): ?>
         <p>No student accounts are awaiting approval.</p>
     <?php else: ?>
-        <p>Verify each student's identity against your student records before approving.</p>
+        <p>Verify each student's identity against your records. Rejecting an unverified registration releases the student ID and email.</p>
         <div class="table-scroll" tabindex="0" role="region" aria-labelledby="approval-title">
             <table>
                 <thead>
@@ -121,9 +126,9 @@ require __DIR__ . '/../includes/header.php';
                             <td>
                                 <form method="post" action="dashboard.php#student-approvals">
                                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
-                                    <input type="hidden" name="action" value="approve_student">
                                     <input type="hidden" name="user_id" value="<?= (int) $student['id'] ?>">
-                                    <button class="button" type="submit">Approve account</button>
+                                    <button class="button" type="submit" name="action" value="approve_student">Approve account</button>
+                                    <button class="button button-danger" type="submit" name="action" value="reject_student">Reject registration</button>
                                 </form>
                             </td>
                         </tr>

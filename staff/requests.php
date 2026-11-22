@@ -2,7 +2,34 @@
 
 require_once __DIR__ . '/../includes/auth.php';
 
-function approveRequest(PDO $database, int $requestId, string $dueDate): void
+function assignLoanAssets(PDO $database, int $requestId, int $equipmentId, int $quantity, string $tagInput): void
+{
+    $tags = array_map('trim', explode(',', $tagInput));
+    if (count($tags) !== $quantity) {
+        throw new DomainException('Enter exactly one asset tag for each unit being issued.');
+    }
+
+    $find = $database->prepare(
+        'SELECT id FROM equipment_assets WHERE equipment_id = ? AND asset_tag = ?
+         AND retired_at IS NULL AND current_request_id IS NULL'
+    );
+    $assign = $database->prepare('UPDATE equipment_assets SET current_request_id = ? WHERE id = ?');
+    $history = $database->prepare('INSERT INTO loan_assets (request_id, asset_id) VALUES (?, ?)');
+    foreach ($tags as $tag) {
+        if (!validText($tag, 80)) {
+            throw new DomainException('Enter a valid tag for each unit being issued.');
+        }
+        $find->execute([$equipmentId, $tag]);
+        $assetId = $find->fetchColumn();
+        if ($assetId === false) {
+            throw new DomainException('Check that each selected tag is distinct and in storage for this equipment.');
+        }
+        $assign->execute([$requestId, $assetId]);
+        $history->execute([$requestId, $assetId]);
+    }
+}
+
+function approveRequest(PDO $database, int $requestId, string $dueDate, string $condition, string $decision, string $assetTags): void
 {
     $lookup = $database->prepare('SELECT equipment_id, user_id FROM borrow_requests WHERE id = ?');
     $lookup->execute([$requestId]);
@@ -17,7 +44,7 @@ function approveRequest(PDO $database, int $requestId, string $dueDate): void
 
     try {
         // Lock equipment first so approvals, returns, and inventory edits use the same order.
-        $stock = $database->prepare('SELECT available_quantity, is_active, is_under_maintenance FROM equipment WHERE id = ? FOR UPDATE');
+        $stock = $database->prepare('SELECT available_quantity, is_active, is_under_maintenance, tracks_assets FROM equipment WHERE id = ? FOR UPDATE');
         $stock->execute([$equipmentId]);
         $item = $stock->fetch();
 
@@ -28,15 +55,20 @@ function approveRequest(PDO $database, int $requestId, string $dueDate): void
             throw new DomainException('The request must belong to a student.');
         }
 
-        $pending = $database->prepare(
-            "SELECT quantity, CURRENT_DATE() AS today FROM borrow_requests
-             WHERE id = ? AND equipment_id = ? AND status = 'pending' FOR UPDATE"
+        $loan = $database->prepare(
+            'SELECT quantity, status, collection_deadline, CURRENT_DATE() AS today,
+                    CURRENT_TIMESTAMP() AS now_time
+             FROM borrow_requests WHERE id = ? AND equipment_id = ? FOR UPDATE'
         );
-        $pending->execute([$requestId, $equipmentId]);
-        $request = $pending->fetch();
+        $loan->execute([$requestId, $equipmentId]);
+        $request = $loan->fetch();
+        $collecting = $decision === 'collect';
+        $reserving = $decision === 'reserve';
 
-        if ($request === false) {
-            throw new DomainException('Only pending requests can be approved.');
+        if ($request === false || ($collecting
+            ? ($request['status'] !== 'reserved' || $request['collection_deadline'] <= $request['now_time'])
+            : !in_array($request['status'], ['pending', 'waitlisted'], true))) {
+            throw new DomainException('This request is no longer eligible for the selected action.');
         }
         if ($item === false || !$item['is_active']) {
             throw new DomainException('This equipment is no longer active.');
@@ -44,24 +76,46 @@ function approveRequest(PDO $database, int $requestId, string $dueDate): void
         if ($item['is_under_maintenance']) {
             throw new DomainException('This equipment is under maintenance.');
         }
-        if ($request['quantity'] + borrowedUnits($database, $requestOwner['user_id']) > MAX_BORROWED_UNITS) {
-            throw new DomainException('This issue exceeds the student borrowing limit of ' . MAX_BORROWED_UNITS . ' units.');
-        }
-        if ($dueDate < $request['today']) {
+        if (!$reserving && $dueDate < $request['today']) {
             throw new DomainException('Choose a return due date of today or later.');
         }
-        if ($request['quantity'] > $item['available_quantity']) {
-            throw new DomainException('There is not enough available stock to issue this request.');
+
+        if (!$collecting) {
+            $head = $database->prepare(
+                "SELECT id FROM borrow_requests WHERE equipment_id = ? AND status = 'waitlisted' ORDER BY id LIMIT 1"
+            );
+            $head->execute([$equipmentId]);
+            $firstWaiting = $head->fetchColumn();
+            if ($firstWaiting !== false && (int) $firstWaiting !== $requestId) {
+                throw new DomainException('Serve the oldest waitlisted request for this equipment first.');
+            }
+            if ($request['quantity'] + borrowedUnits($database, $requestOwner['user_id']) > MAX_BORROWED_UNITS) {
+                throw new DomainException('This action exceeds the student borrowing limit of ' . MAX_BORROWED_UNITS . ' units.');
+            }
+            if ($request['quantity'] > $item['available_quantity']) {
+                throw new DomainException('There is not enough available stock for this request.');
+            }
+
+            $deduct = $database->prepare('UPDATE equipment SET available_quantity = available_quantity - ? WHERE id = ?');
+            $deduct->execute([$request['quantity'], $equipmentId]);
         }
 
-        $deduct = $database->prepare('UPDATE equipment SET available_quantity = available_quantity - ? WHERE id = ?');
-        $deduct->execute([$request['quantity'], $equipmentId]);
-
-        $issue = $database->prepare(
-            "UPDATE borrow_requests SET status = 'borrowed', approval_date = ?, issue_date = ?, due_date = ?
-             WHERE id = ?"
-        );
-        $issue->execute([$request['today'], $request['today'], $dueDate, $requestId]);
+        if ($reserving) {
+            $reserve = $database->prepare(
+                "UPDATE borrow_requests SET status = 'reserved', approval_date = CURRENT_DATE(),
+                 collection_deadline = CURRENT_TIMESTAMP() + INTERVAL 48 HOUR WHERE id = ?"
+            );
+            $reserve->execute([$requestId]);
+        } else {
+            if ($item['tracks_assets']) {
+                assignLoanAssets($database, $requestId, $equipmentId, (int) $request['quantity'], $assetTags);
+            }
+            $issue = $database->prepare(
+                "UPDATE borrow_requests SET status = 'borrowed', approval_date = COALESCE(approval_date, ?),
+                 issue_date = ?, due_date = ?, issue_condition = ? WHERE id = ?"
+            );
+            $issue->execute([$request['today'], $request['today'], $dueDate, $condition, $requestId]);
+        }
 
         $database->commit();
     } catch (Throwable $exception) {
@@ -153,28 +207,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') !== 'extension'
     $requestId = filter_var(formValue('request_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     $decision = formValue('decision');
     $dueDate = formValue('due_date');
+    $condition = trim(formValue('issue_condition'));
     $rejectionReason = trim(formValue('rejection_reason'));
 
-    if ($requestId === false || !in_array($decision, ['approve', 'reject'], true)) {
+    if ($requestId === false || !in_array($decision, ['approve', 'reserve', 'collect', 'reject'], true)) {
         $errors[] = 'Choose a valid request and decision.';
-    } elseif ($decision === 'approve' && !validDate($dueDate)) {
+    } elseif (in_array($decision, ['approve', 'collect'], true) && !validDate($dueDate)) {
         $errors[] = 'Choose a valid return due date.';
+    } elseif (in_array($decision, ['approve', 'collect'], true) && !validText($condition, 1000)) {
+        $errors[] = 'Enter the condition at issue, up to 1,000 characters.';
     } elseif ($decision === 'reject' && !validText($rejectionReason, 1000)) {
         $errors[] = 'Enter a rejection reason of up to 1,000 characters.';
     } else {
         try {
-            if ($decision === 'approve') {
-                approveRequest($database, $requestId, $dueDate);
-                $_SESSION['notice'] = 'Request approved and equipment issued.';
+            if ($decision !== 'reject') {
+                approveRequest($database, $requestId, $dueDate, $condition, $decision, formValue('asset_tags'));
+                $_SESSION['notice'] = $decision === 'reserve'
+                    ? 'Equipment reserved for 48 hours.'
+                    : 'Equipment issued.';
             } else {
                 $reject = $database->prepare(
                     "UPDATE borrow_requests SET status = 'rejected', rejection_reason = ?
-                     WHERE id = ? AND status = 'pending'"
+                     WHERE id = ? AND status IN ('pending', 'waitlisted')"
                 );
                 $reject->execute([$rejectionReason, $requestId]);
 
                 if ($reject->rowCount() !== 1) {
-                    throw new DomainException('Only pending requests can be rejected.');
+                    throw new DomainException('Only pending or waitlisted requests can be rejected.');
                 }
                 $_SESSION['notice'] = 'Request rejected.';
             }
@@ -190,6 +249,9 @@ $statusOptions = [
     'all' => 'All statuses',
     'extensions' => 'Extension requests',
     'pending' => 'Pending',
+    'waitlisted' => 'Waitlisted',
+    'reserved' => 'Awaiting collection',
+    'expired' => 'Collection expired',
     'borrowed' => 'Borrowed',
     'returned' => 'Returned',
     'rejected' => 'Rejected',
@@ -211,20 +273,22 @@ if ($studentId !== '' && !validText($studentId, 30)) {
 } else {
     $equipmentFilter = $equipmentId === false ? null : $equipmentId;
     $statement = $database->prepare(
-        "SELECT r.id, r.status, r.quantity, r.reason, DATE(r.request_date) AS requested_on,
+        "SELECT r.id, r.status, r.quantity, r.reason, r.collection_deadline, DATE(r.request_date) AS requested_on,
                 r.extension_due_date, r.extension_reason, r.extension_status, r.extension_version, r.extension_review_note,
-                r.preferred_date, r.approval_date, r.issue_date, r.due_date, r.return_date, r.rejection_reason,
+                r.preferred_date, r.approval_date, r.issue_date, r.issue_condition, r.return_condition, r.due_date, r.return_date, r.rejection_reason,
                 u.name AS student_name, u.student_id, u.department, u.email,
-                e.name AS equipment_name, e.equipment_code, e.available_quantity, e.is_under_maintenance
+                e.name AS equipment_name, e.equipment_code, e.available_quantity, e.is_under_maintenance, e.tracks_assets, e.id AS equipment_id,
+                (SELECT GROUP_CONCAT(a.asset_tag ORDER BY a.asset_tag SEPARATOR ', ')
+                 FROM loan_assets x JOIN equipment_assets a ON a.id = x.asset_id WHERE x.request_id = r.id) AS asset_tags
          FROM borrow_requests r
          JOIN users u ON r.user_id = u.id
          JOIN equipment e ON r.equipment_id = e.id
          WHERE LOCATE(?, u.student_id) > 0
            AND (? IS NULL OR r.equipment_id = ?)
            AND (? = 'all' OR r.status = ? OR (? = 'extensions' AND r.status = 'borrowed' AND r.extension_status = 'pending'))
-         ORDER BY r.request_date DESC, r.id DESC"
+         ORDER BY CASE WHEN ? = 'waitlisted' THEN r.id END, r.request_date DESC, r.id DESC"
     );
-    $pagination = paginate($database, $statement, [$studentId, $equipmentFilter, $equipmentFilter, $status, $status, $status], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv');
+    $pagination = paginate($database, $statement, [$studentId, $equipmentFilter, $equipmentFilter, $status, $status, $status, $status], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv');
     $requests = $pagination['records'];
 }
 
@@ -237,13 +301,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv' && $e
         'department' => 'Department',
         'equipment_code' => 'Equipment code',
         'equipment_name' => 'Equipment name',
+        'asset_tags' => 'Asset tags',
         'quantity' => 'Quantity',
         'reason' => 'Borrowing reason',
         'status' => 'Status',
         'requested_on' => 'Request date',
         'preferred_date' => 'Preferred date',
+        'collection_deadline' => 'Collection deadline',
         'approval_date' => 'Approval date',
         'issue_date' => 'Issue date',
+        'issue_condition' => 'Condition at issue',
+        'return_condition' => 'Condition at return',
         'due_date' => 'Due date',
         'return_date' => 'Return date',
         'rejection_reason' => 'Rejection reason',
@@ -259,6 +327,8 @@ require __DIR__ . '/../includes/header.php';
 <div class="page-heading page-actions">
     <h1>Borrowing requests</h1>
     <div class="form-actions">
+        <a href="requests.php?status=waitlisted">Waitlist</a>
+        <a href="requests.php?status=reserved">Awaiting collection</a>
         <a href="requests.php?status=extensions">Review extensions</a>
         <a href="returns.php">View active loans and returns</a>
     </div>
@@ -319,11 +389,17 @@ require __DIR__ . '/../includes/header.php';
                         <td>
                             <?= escape($request['equipment_name']) ?> × <?= (int) $request['quantity'] ?>
                             <small class="table-note"><?= escape($request['equipment_code']) ?></small>
+                            <?php if ($request['asset_tags'] !== null): ?>
+                                <small class="table-note">Assets <?= escape($request['asset_tags']) ?></small>
+                            <?php endif; ?>
                             <p class="request-reason"><?= escape($request['reason']) ?></p>
                         </td>
                         <td>
                             <div>Requested <time><?= escape($request['requested_on']) ?></time></div>
                             <div>Preferred <time><?= escape($request['preferred_date']) ?></time></div>
+                            <?php if ($request['collection_deadline'] !== null): ?>
+                                <div>Collect by <time><?= escape($request['collection_deadline']) ?></time></div>
+                            <?php endif; ?>
                             <?php if ($request['issue_date'] !== null): ?>
                                 <div>Issued <time><?= escape($request['issue_date']) ?></time></div>
                             <?php endif; ?>
@@ -351,7 +427,7 @@ require __DIR__ . '/../includes/header.php';
                             <?php endif; ?>
                         </td>
                         <td>
-                            <?php if ($request['status'] === 'pending'): ?>
+                            <?php if (in_array($request['status'], ['pending', 'waitlisted', 'reserved'], true)): ?>
                                 <form method="post" class="loan-action">
                                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
                                     <input type="hidden" name="request_id" value="<?= (int) $request['id'] ?>">
@@ -363,16 +439,30 @@ require __DIR__ . '/../includes/header.php';
                                     <input id="due-<?= (int) $request['id'] ?>" name="due_date" type="date"
                                            min="<?= escape($today) ?>" required
                                            value="<?= (int) $request['id'] === $requestId ? escape($dueDate) : '' ?>">
-                                    <button class="button" type="submit" name="decision" value="approve">Approve and issue</button>
+                                    <label for="issue-condition-<?= (int) $request['id'] ?>">Condition at issue</label>
+                                    <textarea id="issue-condition-<?= (int) $request['id'] ?>" name="issue_condition" rows="2" maxlength="1000" required></textarea>
+                                    <?php if ($request['tracks_assets']): ?>
+                                        <label for="issue-assets-<?= (int) $request['id'] ?>">Asset tags, separated by commas</label>
+                                        <input id="issue-assets-<?= (int) $request['id'] ?>" name="asset_tags" required>
+                                        <a href="equipment.php?mode=assets&amp;id=<?= (int) $request['equipment_id'] ?>">View tagged units in storage</a>
+                                    <?php endif; ?>
+                                    <?php if ($request['status'] === 'reserved'): ?>
+                                        <button class="button" type="submit" name="decision" value="collect">Confirm collection</button>
+                                    <?php else: ?>
+                                        <button class="button" type="submit" name="decision" value="approve">Approve and issue</button>
+                                        <button class="button" type="submit" name="decision" value="reserve" formnovalidate>Reserve for pickup</button>
+                                    <?php endif; ?>
                                 </form>
-                                <form method="post" class="loan-action rejection-form">
-                                    <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
-                                    <input type="hidden" name="request_id" value="<?= (int) $request['id'] ?>">
-                                    <label for="rejection-<?= (int) $request['id'] ?>">Rejection reason</label>
-                                    <textarea id="rejection-<?= (int) $request['id'] ?>" name="rejection_reason"
-                                              rows="3" maxlength="1000" required><?= (int) $request['id'] === $requestId ? escape($rejectionReason) : '' ?></textarea>
-                                    <button class="button button-danger" type="submit" name="decision" value="reject">Reject request</button>
-                                </form>
+                                <?php if ($request['status'] !== 'reserved'): ?>
+                                    <form method="post" class="loan-action rejection-form">
+                                        <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
+                                        <input type="hidden" name="request_id" value="<?= (int) $request['id'] ?>">
+                                        <label for="rejection-<?= (int) $request['id'] ?>">Rejection reason</label>
+                                        <textarea id="rejection-<?= (int) $request['id'] ?>" name="rejection_reason"
+                                                  rows="3" maxlength="1000" required><?= (int) $request['id'] === $requestId ? escape($rejectionReason) : '' ?></textarea>
+                                        <button class="button button-danger" type="submit" name="decision" value="reject">Reject request</button>
+                                    </form>
+                                <?php endif; ?>
                             <?php elseif (in_array($request['status'], ['borrowed', 'returned'], true)): ?>
                                 <a href="requests.php?slip=<?= (int) $request['id'] ?>">Borrowing slip</a>
                                 <?php if ($request['status'] === 'borrowed' && $request['extension_status'] === 'pending'): ?>

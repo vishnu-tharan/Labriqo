@@ -65,6 +65,7 @@ function requireRole(string $role): array
         exit('You do not have access to this page.');
     }
 
+    expireReservations(db());
     return $user;
 }
 
@@ -240,10 +241,49 @@ function paginate(PDO $database, PDOStatement $statement, array $parameters, boo
 }
 
 
+function expireReservations(PDO $database): void
+{
+    $equipmentIds = $database->query(
+        "SELECT DISTINCT equipment_id FROM borrow_requests
+         WHERE status = 'reserved' AND collection_deadline <= CURRENT_TIMESTAMP() ORDER BY equipment_id"
+    )->fetchAll(PDO::FETCH_COLUMN);
+
+    foreach ($equipmentIds as $equipmentId) {
+        $database->beginTransaction();
+        try {
+            $lock = $database->prepare('SELECT id FROM equipment WHERE id = ? FOR UPDATE');
+            $lock->execute([$equipmentId]);
+            $expired = $database->prepare(
+                "SELECT id, quantity FROM borrow_requests
+                 WHERE equipment_id = ? AND status = 'reserved' AND collection_deadline <= CURRENT_TIMESTAMP()
+                 FOR UPDATE"
+            );
+            $expired->execute([$equipmentId]);
+
+            $release = $database->prepare("UPDATE borrow_requests SET status = 'expired' WHERE id = ?");
+            $quantity = 0;
+            foreach ($expired->fetchAll() as $reservation) {
+                $release->execute([$reservation['id']]);
+                $quantity += (int) $reservation['quantity'];
+            }
+            if ($quantity > 0) {
+                $stock = $database->prepare('UPDATE equipment SET available_quantity = available_quantity + ? WHERE id = ?');
+                $stock->execute([$quantity, $equipmentId]);
+            }
+            $database->commit();
+        } catch (Throwable $exception) {
+            if ($database->inTransaction()) {
+                $database->rollBack();
+            }
+            throw $exception;
+        }
+    }
+}
+
 function borrowedUnits(PDO $database, int $studentId): int
 {
     $statement = $database->prepare(
-        "SELECT COALESCE(SUM(quantity), 0) FROM borrow_requests WHERE user_id = ? AND status = 'borrowed'"
+        "SELECT COALESCE(SUM(quantity), 0) FROM borrow_requests WHERE user_id = ? AND status IN ('borrowed', 'reserved')"
     );
     $statement->execute([$studentId]);
     return (int) $statement->fetchColumn();
@@ -253,9 +293,11 @@ function getBorrowingSlip(PDO $database, array $user, string $requestId): array
 {
     $id = filter_var($requestId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     $statement = $database->prepare(
-        "SELECT r.id, r.quantity, r.reason, r.status, r.issue_date, r.due_date, r.return_date,
+        "SELECT r.id, r.quantity, r.reason, r.status, r.issue_date, r.due_date, r.return_date, r.issue_condition, r.return_condition,
                 u.name AS student_name, u.student_id, u.department, u.email,
-                e.name AS equipment_name, e.equipment_code
+                e.name AS equipment_name, e.equipment_code,
+                (SELECT GROUP_CONCAT(a.asset_tag ORDER BY a.asset_tag SEPARATOR ', ')
+                 FROM loan_assets x JOIN equipment_assets a ON a.id = x.asset_id WHERE x.request_id = r.id) AS asset_tags
          FROM borrow_requests r
          JOIN users u ON r.user_id = u.id
          JOIN equipment e ON r.equipment_id = e.id

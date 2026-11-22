@@ -224,3 +224,63 @@ For an existing database, select labriqo in phpMyAdmin and run the following onc
         PRIMARY KEY (scope_key, window_start),
         INDEX login_attempts_window (window_start)
     ) ENGINE=InnoDB;
+
+## Inventory and lending workflows
+
+| Feature | Where to use it |
+| --- | --- |
+| Registration rejection | Staff can reject an unverified signup under **Dashboard → Student account approvals**. This removes the pending registration and makes its student ID and email available again. |
+| Equipment condition | Staff record condition when issuing and returning equipment. Notes appear on borrowing slips and in the requests CSV. |
+| Stock adjustment history | Staff enter a reason when changing total stock and can view the date, staff member, and old and new totals under **Equipment → Stock history**. New stock is logged as initial inventory. Equipment with recorded history is archived when removed. |
+| Collection deadlines | Staff choose **Reserve for pickup**, then **Confirm collection** under **Awaiting collection** when handing over the equipment. A reservation holds stock for 48 hours using the database clock. Expired reservations release stock the next time a signed-in user opens an app page. Reservations count toward the student's borrowing limit. |
+| Waitlist | Students can choose **Join waitlist** when the quantity is unavailable or the equipment already has a queue. **My requests** shows their position. Staff process the oldest entry first under **Requests → Waitlist**. Waitlisted requests hold stock only after reservation or issue. |
+| Individual asset tracking | In **Equipment → Assets**, enter one unique tag per unit once all units are in stock. Staff choose the exact tags at issue and verify them at return. Add or retire tagged units from the Assets page with a reason. Each asset links to its borrowing history and condition notes. Equipment without tags uses quantity-based checkout. |
+
+### Upgrade an existing database
+
+For an installation that already has the preceding features, select the labriqo database in phpMyAdmin and run this upgrade once. A fresh import of database.sql includes these changes.
+
+```sql
+ALTER TABLE equipment ADD COLUMN tracks_assets TINYINT(1) NOT NULL DEFAULT 0;
+
+ALTER TABLE borrow_requests
+    ADD COLUMN issue_condition VARCHAR(1000) DEFAULT NULL,
+    ADD COLUMN return_condition VARCHAR(1000) DEFAULT NULL,
+    MODIFY COLUMN status ENUM('pending', 'borrowed', 'returned', 'rejected', 'cancelled', 'waitlisted', 'reserved', 'expired') NOT NULL DEFAULT 'pending',
+    ADD COLUMN collection_deadline DATETIME DEFAULT NULL,
+    ADD INDEX borrow_collection_deadline (status, collection_deadline),
+    ADD INDEX borrow_equipment_queue (equipment_id, status, id);
+
+CREATE TABLE IF NOT EXISTS equipment_assets (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    equipment_id INT UNSIGNED NOT NULL,
+    asset_tag VARCHAR(80) NOT NULL UNIQUE,
+    current_request_id INT UNSIGNED DEFAULT NULL,
+    retired_at DATETIME DEFAULT NULL,
+    CONSTRAINT assets_equipment_fk FOREIGN KEY (equipment_id) REFERENCES equipment (id),
+    CONSTRAINT assets_current_loan_fk FOREIGN KEY (current_request_id) REFERENCES borrow_requests (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS loan_assets (
+    request_id INT UNSIGNED NOT NULL,
+    asset_id INT UNSIGNED NOT NULL,
+    PRIMARY KEY (request_id, asset_id),
+    CONSTRAINT loan_assets_request_fk FOREIGN KEY (request_id) REFERENCES borrow_requests (id),
+    CONSTRAINT loan_assets_asset_fk FOREIGN KEY (asset_id) REFERENCES equipment_assets (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS stock_adjustments (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    equipment_id INT UNSIGNED NOT NULL,
+    staff_id INT UNSIGNED NOT NULL,
+    previous_total INT NOT NULL,
+    new_total INT NOT NULL,
+    reason VARCHAR(500) NOT NULL,
+    adjusted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT stock_adjustment_equipment FOREIGN KEY (equipment_id) REFERENCES equipment (id),
+    CONSTRAINT stock_adjustment_staff FOREIGN KEY (staff_id) REFERENCES users (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+
+To test the workflow, reserve the last available units, add two students to the waitlist, and confirm the second student cannot receive the units ahead of the first. In a test database, set the reservation deadline to a past time and refresh a signed-in page. The reservation should expire and release stock once. Enable tags on an item, issue its units, and check that an incorrect tag is rejected at return.
