@@ -22,13 +22,30 @@ Copy-Item -LiteralPath assets,config,includes,staff,student,index.php,login.php,
     -Destination $labriqoSite -Recurse -Force
 ```
 
-5. Open [Labriqo](http://localhost/Labriqo/) and select **Register** to create a student account. Staff verify the student ID and approve the registration from **Dashboard → Student account approvals** before the student signs in.
+5. Create the dedicated database login using the setup below, then open [Labriqo](http://localhost/Labriqo/) and select **Register** to create a student account. Staff verify the student ID and approve the registration from **Dashboard → Student account approvals** before the student signs in.
 
 [XAMPP for Windows documentation](https://www.apachefriends.org/faq_windows) · [MySQL constraint support](https://dev.mysql.com/doc/refman/8.0/en/create-table-check-constraints.html)
 
+### Set up the database login
+
+Use an administrative account in phpMyAdmin to run the following SQL. Replace the placeholder with a long random password using letters and digits.
+
+    CREATE USER 'labriqo_app'@'127.0.0.1' IDENTIFIED BY 'REPLACE_WITH_A_RANDOM_PASSWORD';
+    GRANT SELECT, INSERT, UPDATE, DELETE ON labriqo.* TO 'labriqo_app'@'127.0.0.1';
+
+Save the following as C:\xampp\labriqo-db.local.php, above the htdocs folder. Use the same password here. Keep this file private.
+
+    <?php
+    return [
+        'username' => 'labriqo_app',
+        'password' => 'REPLACE_WITH_A_RANDOM_PASSWORD',
+    ];
+
+You can also supply LABRIQO_DB_USER and LABRIQO_DB_PASSWORD through the environment running PHP. Use phpMyAdmin with an administrative account for schema upgrades.
+
 ### Create the first staff account
 
-Public registration creates student accounts. Use PowerShell to generate a hash for the staff password. Enter at least 8 characters and at most 72 bytes.
+Public registration creates student accounts. Use PowerShell to generate a hash for the staff password. Use a strong password of at least 15 characters and at most 72 bytes.
 
 ```powershell
 $staffPassword = Read-Host 'Staff password' -AsSecureString
@@ -37,8 +54,8 @@ try {
     @'
 <?php
 $password = (string) getenv('LABRIQO_STAFF_PASSWORD');
-if (mb_strlen($password, 'UTF-8') < 8 || strlen($password) > 72) {
-    echo 'Use at least 8 characters and at most 72 bytes.', PHP_EOL;
+if (mb_strlen($password, 'UTF-8') < 15 || strlen($password) > 72) {
+    echo 'Use at least 15 characters and at most 72 bytes.', PHP_EOL;
     exit(1);
 }
 echo password_hash($password, PASSWORD_DEFAULT), PHP_EOL;
@@ -63,7 +80,7 @@ Sign in using that email and the original password. The account opens the staff 
 | --- | --- |
 | Page returns 404 | Check that `index.php` is inside `C:\xampp\htdocs\Labriqo`. If Apache uses a custom port, include it in the URL. |
 | Labriqo is temporarily unavailable | Check that MySQL is running and `labriqo` is visible in phpMyAdmin. Review the PHP error log for the underlying error. |
-| Database connection refused or access denied | `config/db.php` defaults to the local `root` account and port `3306`. Set `LABRIQO_DB_PORT` or `LABRIQO_DB_PASSWORD` in the environment running PHP if your settings differ. Edit `$username` in `config/db.php` for a different account. |
+| Database connection refused or access denied | `config/db.php` uses port `3306` by default. Check the dedicated database account and its password file, or check both environment variables. Set `LABRIQO_DB_PORT` for a different port. |
 | PHP reports a missing extension | Run `C:\xampp\php\php.exe -m` to check for `pdo_mysql` and `mbstring`. Enable the missing extension in XAMPP's `php.ini` and restart Apache. |
 
 ## Borrow and return equipment
@@ -133,7 +150,7 @@ Check that rejecting without a reason shows an error, a valid rejection displays
 
 ## Change password
 
-Students open **My profile** and staff open **Dashboard** to find **Change password**. Enter the current password, a new password of at least 8 characters, and the new password again to confirm it. The form supports passwords up to 72 bytes.
+Students open **My profile** and staff open **Dashboard** to find **Change password**. Enter the current password, a new password of at least 15 characters, and the new password again to confirm it. The form supports passwords up to 72 bytes.
 
 After saving, use the new password for your next sign-in. If you receive an incorrect-current-password message, check the password you currently use to sign in.
 
@@ -209,9 +226,9 @@ Test invalid dates, empty reasons, duplicate pending requests, another student's
 
 This XAMPP setup permits access from the same computer. The Labriqo Apache rules block repository and SQL files, turn off directory listings, and send PHP errors to the log. A network deployment needs its own HTTPS and access configuration.
 
-New student registrations wait for staff approval. Staff must verify the student ID and identity against the lab's own records before approving. Existing student accounts retain access when upgrading.
+New student registrations wait for staff approval. Staff must verify the student ID and email against the lab's own records before approving. Existing student accounts retain access when upgrading.
 
-Sign-in allows 10 attempts per account and 50 per IP address in each 15-minute window. Changing a password keeps the current browser signed in and ends previous sessions for that account. After upgrading, sign in again to create a session with the new checks.
+In each 15-minute window, sign-in allows 10 attempts per email or account and 50 per IP address. Registration allows five attempts per IP address. A student can have five pending or waitlisted requests and make up to 10 submission attempts per window. Changing the login email requires the current password. Sessions expire after 30 minutes idle or eight hours total. Equipment images use local files under assets/. Changing a password keeps the current browser signed in and ends previous sessions for that account. After upgrading, sign in again to create a session with the new checks.
 
 For an existing database, select labriqo in phpMyAdmin and run the following once. A fresh import of database.sql already includes both changes.
 

@@ -13,8 +13,22 @@ function db(): PDO
         $host = '127.0.0.1';
         $port = getenv('LABRIQO_DB_PORT') ?: '3306';
         $database = 'labriqo';
-        $username = 'root';
-        $password = (string) getenv('LABRIQO_DB_PASSWORD');
+        $username = getenv('LABRIQO_DB_USER');
+        $password = getenv('LABRIQO_DB_PASSWORD');
+        if ($username === false && $password === false) {
+            // XAMPP credentials live above the htdocs directory.
+            $localConfig = dirname(__DIR__, 3) . '/labriqo-db.local.php';
+            if (is_file($localConfig)) {
+                $credentials = require $localConfig;
+                $username = $credentials['username'] ?? '';
+                $password = $credentials['password'] ?? '';
+            }
+        }
+
+        if (!is_string($username) || trim($username) === '' || strtolower(trim($username)) === 'root'
+            || !is_string($password) || $password === '') {
+            throw new RuntimeException('Set a dedicated Labriqo database user and a non-empty password.');
+        }
 
         $connection = new PDO(
             "mysql:host={$host};port={$port};dbname={$database};charset=utf8mb4",

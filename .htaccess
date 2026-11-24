@@ -1,6 +1,6 @@
 Require local
 Options -Indexes
-RedirectMatch 404 "(?i)(?:^|/)\.git(?:/|$)"
+RedirectMatch 404 "(?i)(?:^|/)(?:\.git|config|includes)(?:/|$)"
 
 <FilesMatch "(?i)(^\.|\.sql$)">
     Require all denied

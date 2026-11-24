@@ -24,16 +24,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = formValue('password');
     $confirmation = formValue('confirm_password');
 
-    $errors = profileErrors($name, $email, $department);
+    $database = db();
+    $window = requestWindow($database);
+    $limited = countAttempt($database, ipAttemptScope('reg'), $window) > 5;
+    if ($limited) {
+        limitResponse($window);
+    }
+    $errors = $limited
+        ? ['Too many registration attempts. Try again later.']
+        : profileErrors($name, $email, $department);
 
     if (!validText($studentId, 30)) {
         $errors[] = 'Enter a student ID of up to 30 characters.';
     }
 
-    // PHP 8 uses bcrypt by default, which accepts up to 72 bytes.
-    if (!mb_check_encoding($password, 'UTF-8') || mb_strlen($password, 'UTF-8') < 8
-        || strlen($password) > 72 || str_contains($password, "\0")) {
-        $errors[] = 'Use a password with at least 8 characters and at most 72 bytes.';
+    $policyError = passwordPolicyError($password);
+    if ($policyError !== null) {
+        $errors[] = $policyError;
     }
 
     if ($password !== $confirmation) {
@@ -48,15 +55,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
             $statement->execute([$studentId, $name, $email, password_hash($password, PASSWORD_DEFAULT), $department]);
 
-            $_SESSION['notice'] = 'Student account created. Staff must verify your student ID and approve your account before you can sign in.';
-            redirect('login.php');
         } catch (PDOException $exception) {
             if (($exception->errorInfo[1] ?? null) !== 1062) {
                 throw $exception;
             }
 
-            $errors[] = 'That email address or student ID is already registered.';
         }
+        $_SESSION['notice'] = 'If this registration can be accepted, it will appear in the staff approval queue. Contact staff to verify your details.';
+        redirect('login.php');
     }
 }
 
@@ -95,9 +101,9 @@ require __DIR__ . '/includes/header.php';
 
             <div class="field">
                 <label for="password">Password</label>
-                <input id="password" name="password" type="password" autocomplete="new-password" minlength="8"
+                <input id="password" name="password" type="password" autocomplete="new-password" minlength="15"
                        aria-describedby="password-hint" required>
-                <small id="password-hint">Use at least 8 characters.</small>
+                <small id="password-hint">Use at least 15 characters.</small>
             </div>
 
             <div class="field">

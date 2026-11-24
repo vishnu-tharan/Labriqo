@@ -58,6 +58,14 @@ if ($detailView) {
         }
 
         if ($errors === []) {
+            $window = requestWindow($database);
+            if (countAttempt($database, 'borrow:' . $user['id'], $window) > 10) {
+                limitResponse($window);
+                $errors[] = 'Too many borrowing attempts. Try again later.';
+            }
+        }
+
+        if ($errors === []) {
             $database->beginTransaction();
 
             try {
@@ -74,6 +82,17 @@ if ($detailView) {
                     $item = false;
                     http_response_code(404);
                 } else {
+                    // Use the staff approval lock order so submissions for different items share one cap.
+                    $student = $database->prepare('SELECT id FROM users WHERE id = ? FOR UPDATE');
+                    $student->execute([$user['id']]);
+                    $open = $database->prepare(
+                        "SELECT COUNT(*) FROM borrow_requests WHERE user_id = ? AND status IN ('pending', 'waitlisted')"
+                    );
+                    $open->execute([$user['id']]);
+                    if ((int) $open->fetchColumn() >= 5) {
+                        $errors[] = 'You can have up to five pending or waitlisted requests at a time.';
+                    }
+
                     $item['total_quantity'] = $current['total_quantity'];
                     $item['available_quantity'] = $current['available_quantity'];
                     $item['today'] = $current['today'];
@@ -159,8 +178,8 @@ require __DIR__ . '/../includes/header.php';
         </section>
     <?php else: ?>
         <article class="panel equipment-detail">
-            <?php if ($item['image_url']): ?>
-                <img class="equipment-image" src="<?= escape($item['image_url']) ?>"
+            <?php if (safeEquipmentImage($item['image_url'])): ?>
+                <img class="equipment-image" src="../<?= escape($item['image_url']) ?>"
                      alt="<?= escape($item['name']) ?>" referrerpolicy="no-referrer">
             <?php else: ?>
                 <div class="equipment-image image-placeholder">No image available</div>
@@ -257,8 +276,8 @@ require __DIR__ . '/../includes/header.php';
     <div class="equipment-grid">
         <?php foreach ($equipment as $item): ?>
             <article class="panel equipment-card">
-                <?php if ($item['image_url']): ?>
-                    <img class="equipment-image" src="<?= escape($item['image_url']) ?>"
+                <?php if (safeEquipmentImage($item['image_url'])): ?>
+                    <img class="equipment-image" src="../<?= escape($item['image_url']) ?>"
                          alt="<?= escape($item['name']) ?>" loading="lazy" referrerpolicy="no-referrer">
                 <?php else: ?>
                     <div class="equipment-image image-placeholder">No image available</div>

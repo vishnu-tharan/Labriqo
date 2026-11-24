@@ -370,10 +370,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
         }
 
         $imageUrl = $fields['image_url'];
-        if ($imageUrl !== '' && (strlen($imageUrl) > 2048
-            || filter_var($imageUrl, FILTER_VALIDATE_URL) === false
-            || !in_array(strtolower((string) parse_url($imageUrl, PHP_URL_SCHEME)), ['http', 'https'], true))) {
-            $errors[] = 'Enter a valid HTTP or HTTPS image URL of up to 2,048 characters.';
+        if ($imageUrl !== '' && !safeEquipmentImage($imageUrl)) {
+            $errors[] = 'Use a local image path under assets/, such as assets/multimeter.png.';
         }
     }
 
@@ -819,9 +817,10 @@ require __DIR__ . '/../includes/header.php';
                 <small>Maintenance pauses new requests and issues for this equipment type.</small>
             </div>
             <div class="field">
-                <label for="image-url">Image URL (optional)</label>
-                <input id="image-url" name="image_url" type="url" maxlength="2048"
-                       value="<?= escape($fields['image_url']) ?>">
+                <label for="image-url">Local image path (optional)</label>
+                <input id="image-url" name="image_url" maxlength="255"
+                       value="<?= safeEquipmentImage($fields['image_url']) ? escape($fields['image_url']) : '' ?>">
+                <small>Choose an image already stored under assets/, such as assets/multimeter.png.</small>
             </div>
             <div class="form-actions">
                 <button class="button" type="submit"><?= $mode === 'add' ? 'Add equipment' : 'Save changes' ?></button>

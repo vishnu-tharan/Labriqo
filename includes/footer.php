@@ -1,3 +1,9 @@
+<?php
+if (!isset($pageTitle)) {
+    http_response_code(404);
+    exit;
+}
+?>
 <?php if (isset($borrowingSlip)): ?>
     <div class="slip-tools">
         <p><a href="requests.php">Back to borrowing records</a></p>
@@ -76,8 +82,8 @@
             <div class="field">
                 <label for="new-password">New password</label>
                 <input id="new-password" name="new_password" type="password"
-                       autocomplete="new-password" minlength="8" aria-describedby="new-password-hint" required>
-                <small id="new-password-hint">Use at least 8 characters.</small>
+                       autocomplete="new-password" minlength="15" aria-describedby="new-password-hint" required>
+                <small id="new-password-hint">Use at least 15 characters.</small>
             </div>
             <div class="field">
                 <label for="confirm-password">Confirm new password</label>

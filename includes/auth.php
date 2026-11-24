@@ -10,14 +10,69 @@ set_exception_handler(function (Throwable $exception): void {
     exit('Labriqo is temporarily unavailable. Please try again later.');
 });
 
+header("Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: no-referrer');
+header('Cache-Control: no-store');
+$https = isset($_SERVER['HTTPS']) && in_array(strtolower($_SERVER['HTTPS']), ['on', '1'], true);
+if (PHP_SAPI !== 'cli' && !$https && !in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)) {
+    http_response_code(403);
+    exit('Use HTTPS to connect from another computer.');
+}
+
+session_cache_limiter('');
 session_name('LabriqoSession');
 session_start([
     'use_strict_mode' => true,
     'use_only_cookies' => true,
     'cookie_httponly' => true,
-    'cookie_secure' => isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+    'cookie_secure' => $https,
     'cookie_samesite' => 'Lax',
 ]);
+
+function countAttempt(PDO $database, string $scope, int $window): int
+{
+    $database->beginTransaction();
+    try {
+        $record = $database->prepare(
+            'INSERT INTO login_attempts (scope_key, window_start) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE attempts = attempts + 1'
+        );
+        $record->execute([$scope, $window]);
+        $count = $database->prepare('SELECT attempts FROM login_attempts WHERE scope_key = ? AND window_start = ?');
+        $count->execute([$scope, $window]);
+        $attempts = (int) $count->fetchColumn();
+        $database->commit();
+        return $attempts;
+    } catch (Throwable $exception) {
+        if ($database->inTransaction()) {
+            $database->rollBack();
+        }
+        throw $exception;
+    }
+}
+
+function requestWindow(PDO $database): int
+{
+    $window = intdiv(time(), 900) * 900;
+    if (random_int(1, 100) === 1) {
+        $cleanup = $database->prepare('DELETE FROM login_attempts WHERE window_start < ?');
+        $cleanup->execute([$window - 900]);
+    }
+    return $window;
+}
+
+function ipAttemptScope(string $prefix): string
+{
+    return $prefix . ':' . hash('sha256', $_SERVER['REMOTE_ADDR'] ?? 'unknown');
+}
+
+function limitResponse(int $window): void
+{
+    http_response_code(429);
+    header('Retry-After: ' . max(1, $window + 900 - time()));
+}
 
 function redirect(string $path): void
 {
@@ -36,6 +91,13 @@ function currentUser(): ?array
         return null;
     }
 
+    $now = time();
+    if ($now - ($_SESSION['last_active_at'] ?? 0) >= 1800 || $now - ($_SESSION['signed_in_at'] ?? 0) >= 28800) {
+        $_SESSION = [];
+        session_regenerate_id(true);
+        return null;
+    }
+
     $statement = db()->prepare(
         'SELECT id, student_id, name, email, department, role, password, is_approved FROM users WHERE id = ?'
     );
@@ -48,6 +110,7 @@ function currentUser(): ?array
         return null;
     }
 
+    $_SESSION['last_active_at'] = $now;
     unset($user['password'], $user['is_approved']);
     return $user;
 }
@@ -144,18 +207,48 @@ function profileErrors(string $name, string $email, string $department): array
 }
 
 
+function passwordPolicyError(string $password): ?string
+{
+    if (!mb_check_encoding($password, 'UTF-8') || mb_strlen($password, 'UTF-8') < 15
+        || strlen($password) > 72 || str_contains($password, "\0")) {
+        return 'Use a password with at least 15 characters and at most 72 bytes.';
+    }
+
+    $simplified = preg_replace('/[^a-z0-9]/', '', strtolower($password));
+    if (preg_match('/\A(.)\1+\z/us', $password) === 1
+        || ($simplified !== '' && ctype_digit($simplified))
+        || preg_match('/\A(?:password|qwerty|letmein|admin)[0-9]*\z/', $simplified) === 1) {
+        return 'Choose a less predictable password or passphrase.';
+    }
+
+    return null;
+}
+
+function safeEquipmentImage(?string $path): bool
+{
+    return $path !== null && strlen($path) <= 255
+        && preg_match('~\Aassets/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.(?:png|jpe?g|webp|gif|avif)\z~i', $path) === 1;
+}
+
 function changePassword(int $userId, string $currentPassword, string $newPassword, string $confirmation): array
 {
-    if (!mb_check_encoding($newPassword, 'UTF-8') || mb_strlen($newPassword, 'UTF-8') < 8
-        || strlen($newPassword) > 72 || str_contains($newPassword, "\0")) {
-        return ['Use a new password with at least 8 characters and at most 72 bytes.'];
+    $policyError = passwordPolicyError($newPassword);
+    if ($policyError !== null) {
+        return [$policyError];
     }
 
     if ($newPassword !== $confirmation) {
         return ['The new passwords do not match.'];
     }
 
-    $statement = db()->prepare('SELECT password FROM users WHERE id = ?');
+    $database = db();
+    $window = requestWindow($database);
+    if (countAttempt($database, 'account-change:' . $userId, $window) > 5) {
+        limitResponse($window);
+        return ['Too many account change attempts. Try again later.'];
+    }
+
+    $statement = $database->prepare('SELECT password FROM users WHERE id = ?');
     $statement->execute([$userId]);
     $storedHash = $statement->fetchColumn();
 

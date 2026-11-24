@@ -101,10 +101,12 @@ if (queryValue('view') === 'activity') {
     exit;
 }
 
-$pendingStudents = $database->query(
+$statement = $database->prepare(
     "SELECT id, name, student_id, email, department FROM users
      WHERE role = 'student' AND is_approved = 0 ORDER BY created_at, id"
-)->fetchAll();
+);
+$pagination = paginate($database, $statement, []);
+$pendingStudents = $pagination['records'];
 
 $inventory = $database->query(
     'SELECT COUNT(*) AS equipment_types, COALESCE(SUM(total_quantity), 0) AS total_units
@@ -165,7 +167,7 @@ require __DIR__ . '/../includes/header.php';
     <?php if ($pendingStudents === []): ?>
         <p>No student accounts are awaiting approval.</p>
     <?php else: ?>
-        <p>Verify each student's identity against your records. Rejecting an unverified registration releases the student ID and email.</p>
+        <p>Verify the student ID and email against your records. Rejecting an unverified registration releases the student ID and email.</p>
         <div class="table-scroll" tabindex="0" role="region" aria-labelledby="approval-title">
             <table>
                 <thead>
