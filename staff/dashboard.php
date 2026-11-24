@@ -19,9 +19,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ? "DELETE FROM users WHERE id = ? AND role = 'student' AND is_approved = 0
                    AND NOT EXISTS (SELECT 1 FROM borrow_requests WHERE user_id = users.id)"
                 : "UPDATE users SET is_approved = 1 WHERE id = ? AND role = 'student' AND is_approved = 0";
-            $approval = $database->prepare($sql);
-            $approval->execute([$studentId]);
-            if ($approval->rowCount() === 1) {
+            $database->beginTransaction();
+            try {
+                $approval = $database->prepare($sql);
+                $approval->execute([$studentId]);
+                $changed = $approval->rowCount() === 1;
+                if ($changed) {
+                    recordStaffActivity($database, $user['id'], $rejecting ? 'Registration rejected' : 'Registration approved', 'Student account', $studentId);
+                }
+                $database->commit();
+            } catch (Throwable $exception) {
+                if ($database->inTransaction()) {
+                    $database->rollBack();
+                }
+                throw $exception;
+            }
+            if ($changed) {
                 $_SESSION['notice'] = $rejecting ? 'Registration rejected and student ID released.' : 'Student account approved.';
                 redirect('dashboard.php#student-approvals');
             }
@@ -43,6 +56,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 
+if (queryValue('view') === 'activity') {
+    $pageTitle = 'Staff activity';
+    $showPasswordForm = false;
+    $statement = $database->prepare(
+        'SELECT a.id, a.action_name, a.target_type, a.target_id, a.detail, a.recorded_at, u.name AS staff_name
+         FROM staff_activity a JOIN users u ON u.id = a.staff_id ORDER BY a.id DESC'
+    );
+    $pagination = paginate($database, $statement, []);
+    require __DIR__ . '/../includes/header.php';
+    ?>
+    <div class="page-heading page-actions">
+        <h1>Staff activity</h1>
+        <a href="dashboard.php">Back to dashboard</a>
+    </div>
+    <?php if ($pagination['records'] === []): ?>
+        <p class="panel">No staff activity has been recorded yet.</p>
+    <?php else: ?>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Staff activity">
+            <table>
+                <thead>
+                    <tr><th scope="col">When</th><th scope="col">Staff member</th><th scope="col">Action</th><th scope="col">Record</th></tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($pagination['records'] as $entry): ?>
+                        <tr>
+                            <td><?= escape($entry['recorded_at']) ?></td>
+                            <td><?= escape($entry['staff_name']) ?></td>
+                            <td>
+                                <?= escape($entry['action_name']) ?>
+                                <?php if ($entry['detail'] !== null): ?>
+                                    <small class="table-note"><?= escape($entry['detail']) ?></small>
+                                <?php endif; ?>
+                            </td>
+                            <td><?= escape($entry['target_type']) ?> #<?= (int) $entry['target_id'] ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+    <?php
+    require __DIR__ . '/../includes/footer.php';
+    exit;
+}
+
 $pendingStudents = $database->query(
     "SELECT id, name, student_id, email, department FROM users
      WHERE role = 'student' AND is_approved = 0 ORDER BY created_at, id"
@@ -54,7 +112,7 @@ $inventory = $database->query(
 )->fetch();
 
 $lending = $database->query(
-    "SELECT COALESCE(SUM(CASE WHEN status = 'borrowed' THEN quantity ELSE 0 END), 0) AS borrowed_units,
+    "SELECT COALESCE(SUM(CASE WHEN status = 'borrowed' THEN quantity - settled_quantity ELSE 0 END), 0) AS borrowed_units,
             COUNT(CASE WHEN status = 'pending' THEN 1 END) AS pending_requests,
             COUNT(CASE WHEN status = 'borrowed' AND due_date < CURRENT_DATE() THEN 1 END) AS overdue_loans
      FROM borrow_requests"
@@ -87,7 +145,10 @@ require __DIR__ . '/../includes/header.php';
         <p class="dashboard-welcome">Welcome, <?= escape($user['name']) ?>.</p>
         <p class="dashboard-meta"><?= escape($user['department']) ?> · <?= escape($user['email']) ?></p>
     </div>
-    <a class="button" href="requests.php">Review requests</a>
+    <div class="form-actions">
+        <a href="dashboard.php?view=activity">Staff activity</a>
+        <a class="button" href="requests.php">Review requests</a>
+    </div>
 </div>
 
 <dl class="dashboard-stats" aria-label="Inventory and lending summary">

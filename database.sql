@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS equipment (
     description TEXT NOT NULL,
     total_quantity INT NOT NULL,
     available_quantity INT NOT NULL,
+    damaged_quantity INT NOT NULL DEFAULT 0,
+    CONSTRAINT equipment_damaged_range CHECK (damaged_quantity >= 0 AND damaged_quantity <= total_quantity - available_quantity),
     location VARCHAR(120) NOT NULL,
     image_url VARCHAR(2048),
     is_active TINYINT(1) NOT NULL DEFAULT 1,
@@ -63,6 +65,8 @@ CREATE TABLE IF NOT EXISTS borrow_requests (
     issue_date DATE,
     issue_condition VARCHAR(1000) DEFAULT NULL,
     return_condition VARCHAR(1000) DEFAULT NULL,
+    settled_quantity INT NOT NULL DEFAULT 0,
+    CONSTRAINT loan_settled_quantity CHECK (settled_quantity BETWEEN 0 AND quantity),
     due_date DATE,
     return_date DATE,
     extension_due_date DATE DEFAULT NULL,
@@ -86,6 +90,7 @@ CREATE TABLE IF NOT EXISTS equipment_assets (
     equipment_id INT UNSIGNED NOT NULL,
     asset_tag VARCHAR(80) NOT NULL UNIQUE,
     current_request_id INT UNSIGNED DEFAULT NULL,
+    is_damaged TINYINT(1) NOT NULL DEFAULT 0,
     retired_at DATETIME DEFAULT NULL,
     CONSTRAINT assets_equipment_fk FOREIGN KEY (equipment_id) REFERENCES equipment (id),
     CONSTRAINT assets_current_loan_fk FOREIGN KEY (current_request_id) REFERENCES borrow_requests (id)
@@ -97,6 +102,31 @@ CREATE TABLE IF NOT EXISTS loan_assets (
     PRIMARY KEY (request_id, asset_id),
     CONSTRAINT loan_assets_request_fk FOREIGN KEY (request_id) REFERENCES borrow_requests (id),
     CONSTRAINT loan_assets_asset_fk FOREIGN KEY (asset_id) REFERENCES equipment_assets (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS staff_activity (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    staff_id INT UNSIGNED NOT NULL,
+    action_name VARCHAR(80) NOT NULL,
+    target_type VARCHAR(30) NOT NULL,
+    target_id INT UNSIGNED NOT NULL,
+    detail VARCHAR(500) DEFAULT NULL,
+    recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (staff_id) REFERENCES users (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS loan_settlements (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    request_id INT UNSIGNED NOT NULL,
+    staff_id INT UNSIGNED NOT NULL,
+    quantity INT NOT NULL,
+    outcome ENUM('returned', 'damaged', 'missing') NOT NULL,
+    condition_note VARCHAR(1000) NOT NULL,
+    asset_tags TEXT DEFAULT NULL,
+    recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (request_id) REFERENCES borrow_requests (id),
+    FOREIGN KEY (staff_id) REFERENCES users (id),
+    CHECK (quantity > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS stock_adjustments (

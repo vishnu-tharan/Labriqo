@@ -41,7 +41,7 @@ function saveEquipment(PDO $database, array $fields, ?int $id, int $staffId, str
     // Read the current stock under the lock so an edit preserves units already issued.
     $checkedOut = $item['total_quantity'] - $item['available_quantity'];
     if ($fields['total_quantity'] < $checkedOut) {
-        throw new DomainException("Total quantity must cover the {$checkedOut} units already issued or reserved.");
+        throw new DomainException("Total quantity must cover the {$checkedOut} units already issued, reserved, or held for repair.");
     }
 
     $waiting = $database->prepare("SELECT MAX(quantity) FROM borrow_requests WHERE equipment_id = ? AND status = 'waitlisted'");
@@ -66,15 +66,6 @@ function saveEquipment(PDO $database, array $fields, ?int $id, int $staffId, str
         }
         recordStockAdjustment($database, $id, $staffId, (int) $item['total_quantity'], $fields['total_quantity'], $reason);
     }
-}
-
-function recordStockAdjustment(PDO $database, int $equipmentId, int $staffId, int $before, int $after, string $reason): void
-{
-    $statement = $database->prepare(
-        'INSERT INTO stock_adjustments (equipment_id, staff_id, previous_total, new_total, reason)
-         VALUES (?, ?, ?, ?, ?)'
-    );
-    $statement->execute([$equipmentId, $staffId, $before, $after, $reason]);
 }
 
 function changeAssets(PDO $database, int $equipmentId, int $staffId, string $action): string
@@ -134,7 +125,7 @@ function changeAssets(PDO $database, int $equipmentId, int $staffId, string $act
         }
         $retire = $database->prepare(
             'UPDATE equipment_assets SET retired_at = CURRENT_TIMESTAMP() WHERE id = ? AND equipment_id = ?
-             AND retired_at IS NULL AND current_request_id IS NULL'
+             AND retired_at IS NULL AND current_request_id IS NULL AND is_damaged = 0'
         );
         $retire->execute([$assetId, $equipmentId]);
         if ($retire->rowCount() !== 1) {
@@ -151,6 +142,58 @@ function changeAssets(PDO $database, int $equipmentId, int $staffId, string $act
     $adjust->execute([$change, $change, $equipmentId]);
     recordStockAdjustment($database, $equipmentId, $staffId, (int) $item['total_quantity'], (int) $item['total_quantity'] + $change, $reason);
     return $change > 0 ? 'Asset added.' : 'Asset retired.';
+}
+
+function resolveDamage(PDO $database, int $equipmentId, int $staffId): string
+{
+    $item = findActiveEquipment($database, $equipmentId, true);
+    $quantity = filter_var(formValue('quantity'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    $action = formValue('action');
+    $reason = trim(formValue('stock_reason'));
+
+    if ($item === false || $quantity === false || $quantity > $item['damaged_quantity']
+        || !in_array($action, ['repair', 'discard'], true) || !validText($reason, 500)) {
+        throw new DomainException('Choose a valid quantity held for repair, an outcome, and a reason of up to 500 characters.');
+    }
+
+    $expected = filter_var(formValue('expected_damaged'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    if ($expected !== (int) $item['damaged_quantity']) {
+        throw new DomainException('Units held for repair changed since the form was opened. Refresh and try again.');
+    }
+
+    $discarding = $action === 'discard';
+    if ($item['tracks_assets']) {
+        $tags = array_map('trim', explode(',', formValue('asset_tags')));
+        if (count($tags) !== $quantity) {
+            throw new DomainException('Enter one asset tag per unit.');
+        }
+
+        $resolve = $database->prepare(
+            'UPDATE equipment_assets SET is_damaged = 0,
+             retired_at = CASE WHEN ? THEN CURRENT_TIMESTAMP() ELSE retired_at END
+             WHERE equipment_id = ? AND asset_tag = ? AND is_damaged = 1
+               AND current_request_id IS NULL AND retired_at IS NULL'
+        );
+        foreach ($tags as $tag) {
+            $resolve->execute([(int) $discarding, $equipmentId, $tag]);
+            if ($resolve->rowCount() !== 1) {
+                throw new DomainException('Use distinct tags for units held for repair.');
+            }
+        }
+    }
+
+    $adjust = $database->prepare(
+        'UPDATE equipment SET damaged_quantity = damaged_quantity - ?,
+         available_quantity = available_quantity + ?, total_quantity = total_quantity - ? WHERE id = ?'
+    );
+    $adjust->execute([$quantity, $discarding ? 0 : $quantity, $discarding ? $quantity : 0, $equipmentId]);
+    if ($discarding) {
+        $before = (int) $item['total_quantity'];
+        recordStockAdjustment($database, $equipmentId, $staffId, $before, $before - $quantity, $reason);
+    }
+
+    recordStaffActivity($database, $staffId, $discarding ? 'Damaged units discarded' : 'Units marked repaired', 'Equipment', $equipmentId, "{$quantity} units");
+    return $discarding ? 'Damaged units discarded.' : 'Repaired units are available again.';
 }
 
 function removeEquipment(PDO $database, int $id): string
@@ -194,13 +237,13 @@ $database = db();
 $errors = [];
 
 $mode = queryValue('mode');
-if (!in_array($mode, ['add', 'edit', 'remove', 'categories', 'stock_history', 'assets'], true)) {
+if (!in_array($mode, ['add', 'edit', 'remove', 'categories', 'stock_history', 'assets', 'damage'], true)) {
     $mode = 'list';
 }
 
 $id = null;
 $item = false;
-if (in_array($mode, ['edit', 'remove', 'assets'], true)) {
+if (in_array($mode, ['edit', 'remove', 'assets', 'damage'], true)) {
     $id = filter_var(queryValue('id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     if ($mode === 'assets' && $id !== false) {
         $assetEquipment = $database->prepare('SELECT * FROM equipment WHERE id = ?');
@@ -288,7 +331,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
 
     checkCsrf();
 
-    if (!in_array($mode, ['remove', 'assets'], true)) {
+    if (!in_array($mode, ['remove', 'assets', 'damage'], true)) {
         foreach ($fields as $field => $value) {
             $fields[$field] = trim(formValue($field));
         }
@@ -340,6 +383,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
         try {
             if ($mode === 'remove') {
                 $notice = removeEquipment($database, $id);
+            } elseif ($mode === 'damage') {
+                $notice = resolveDamage($database, $id, $user['id']);
             } elseif ($mode === 'assets') {
                 $notice = changeAssets($database, $id, $user['id'], formValue('action'));
             } else {
@@ -353,7 +398,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
 
             $database->commit();
             $_SESSION['notice'] = $notice;
-            redirect($mode === 'assets' ? 'equipment.php?mode=assets&id=' . $id : 'equipment.php');
+            redirect(in_array($mode, ['assets', 'damage'], true) ? 'equipment.php?mode=' . $mode . '&id=' . $id : 'equipment.php');
         } catch (Throwable $exception) {
             if ($database->inTransaction()) {
                 $database->rollBack();
@@ -401,6 +446,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $mode === 'list'
         'description' => 'Description',
         'total_quantity' => 'Total quantity',
         'available_quantity' => 'Available quantity',
+        'damaged_quantity' => 'Held for repair',
         'location' => 'Storage location',
         'image_url' => 'Image URL',
         'is_under_maintenance' => 'Under maintenance (1=yes, 0=no)',
@@ -410,7 +456,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $mode === 'list'
 
 if ($mode === 'assets') {
     $statement = $database->prepare(
-        'SELECT id, asset_tag, current_request_id, retired_at FROM equipment_assets
+        'SELECT id, asset_tag, current_request_id, retired_at, is_damaged FROM equipment_assets
          WHERE equipment_id = ? ORDER BY retired_at IS NOT NULL, asset_tag'
     );
     $pagination = paginate($database, $statement, [$id]);
@@ -500,7 +546,14 @@ require __DIR__ . '/../includes/header.php';
                             </th>
                             <td><?= escape($row['category_name']) ?></td>
                             <td><?= escape($row['location']) ?></td>
-                            <td><?= (int) $row['available_quantity'] ?> / <?= (int) $row['total_quantity'] ?></td>
+                            <td>
+                                <?= (int) $row['available_quantity'] ?> / <?= (int) $row['total_quantity'] ?>
+                                <?php if ($row['damaged_quantity'] > 0): ?>
+                                    <small class="table-note">
+                                        <a href="equipment.php?mode=damage&amp;id=<?= (int) $row['id'] ?>"><?= (int) $row['damaged_quantity'] ?> held for repair</a>
+                                    </small>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <?php if ($row['is_active']): ?>
                                     <div class="row-actions">
@@ -523,6 +576,40 @@ require __DIR__ . '/../includes/header.php';
             </table>
         </div>
     <?php endif; ?>
+<?php elseif ($mode === 'damage'): ?>
+    <div class="page-heading page-actions">
+        <h1>Units held for repair</h1>
+        <a href="equipment.php">Back to inventory</a>
+    </div>
+    <section class="panel form-panel" aria-labelledby="damage-heading">
+        <h2 id="damage-heading"><?= escape($item['name']) ?></h2>
+        <p><?= (int) $item['damaged_quantity'] ?> units held for repair</p>
+        <?php if ($item['damaged_quantity'] > 0): ?>
+            <form method="post" class="form-stack">
+                <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
+                <input type="hidden" name="expected_damaged" value="<?= (int) $item['damaged_quantity'] ?>">
+                <div class="field">
+                    <label for="damage-quantity">Units to resolve</label>
+                    <input id="damage-quantity" name="quantity" type="number" min="1" max="<?= (int) $item['damaged_quantity'] ?>" required>
+                </div>
+                <?php if ($item['tracks_assets']): ?>
+                    <div class="field">
+                        <a href="equipment.php?mode=assets&amp;id=<?= (int) $id ?>">View asset tags and statuses</a>
+                        <label for="damage-tags">Asset tags, separated by commas</label>
+                        <input id="damage-tags" name="asset_tags" required>
+                    </div>
+                <?php endif; ?>
+                <div class="field">
+                    <label for="damage-reason">Reason</label>
+                    <input id="damage-reason" name="stock_reason" maxlength="500" required>
+                </div>
+                <div class="form-actions">
+                    <button class="button" type="submit" name="action" value="repair">Mark repaired</button>
+                    <button class="button button-danger" type="submit" name="action" value="discard">Discard damaged units</button>
+                </div>
+            </form>
+        <?php endif; ?>
+    </section>
 <?php elseif ($mode === 'assets'): ?>
     <div class="page-heading page-actions">
         <h1><?= escape($item['name']) ?> assets</h1>
@@ -556,10 +643,10 @@ require __DIR__ . '/../includes/header.php';
                     <?php foreach ($assets as $asset): ?>
                         <tr>
                             <th scope="row"><?= escape($asset['asset_tag']) ?></th>
-                            <td><?= $asset['retired_at'] !== null ? 'Retired' : ($asset['current_request_id'] !== null ? 'Issued' : 'In storage') ?></td>
+                            <td><?= $asset['retired_at'] !== null ? 'Retired' : ($asset['current_request_id'] !== null ? 'Issued' : ($asset['is_damaged'] ? 'Held for repair' : 'In storage')) ?></td>
                             <td>
                                 <a href="equipment.php?mode=assets&amp;id=<?= (int) $id ?>&amp;asset=<?= (int) $asset['id'] ?>#asset-loans">Loan history</a>
-                                <?php if ($item['is_active'] && $asset['retired_at'] === null && $asset['current_request_id'] === null && $item['available_quantity'] > 0): ?>
+                                <?php if ($item['is_active'] && $asset['retired_at'] === null && $asset['current_request_id'] === null && !$asset['is_damaged'] && $item['available_quantity'] > 0): ?>
                                     <form method="post" class="loan-action">
                                         <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
                                         <input type="hidden" name="action" value="retire_asset">

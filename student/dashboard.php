@@ -13,7 +13,7 @@ $availableTypes = $database->query(
 
 $statement = $database->prepare(
     "SELECT COUNT(CASE WHEN status = 'pending' THEN 1 END) AS pending_requests,
-            COALESCE(SUM(CASE WHEN status = 'borrowed' THEN quantity ELSE 0 END), 0) AS borrowed_units,
+            COALESCE(SUM(CASE WHEN status = 'borrowed' THEN quantity - settled_quantity ELSE 0 END), 0) AS borrowed_units,
             COUNT(CASE WHEN status = 'borrowed' AND due_date < CURRENT_DATE() THEN 1 END) AS overdue_loans
      FROM borrow_requests
      WHERE user_id = ?"
@@ -29,7 +29,7 @@ $summary = [
 ];
 
 $statement = $database->prepare(
-    "SELECT r.id, r.quantity, r.status, r.due_date, DATE(r.request_date) AS requested_on,
+    "SELECT r.id, r.quantity, r.status, r.due_date, (EXISTS (SELECT 1 FROM loan_settlements ls WHERE ls.request_id = r.id AND ls.outcome = 'missing')) AS has_missing, DATE(r.request_date) AS requested_on,
             e.name AS equipment_name, e.equipment_code,
             (r.status = 'borrowed' AND r.due_date < CURRENT_DATE()) AS is_overdue
      FROM borrow_requests r JOIN equipment e ON r.equipment_id = e.id
@@ -41,7 +41,7 @@ $statement->execute([$user['id']]);
 $activity = $statement->fetchAll();
 
 $statement = $database->prepare(
-    "SELECT r.id, r.quantity, r.due_date, DATEDIFF(r.due_date, CURRENT_DATE()) AS days_remaining,
+    "SELECT r.id, r.quantity - r.settled_quantity AS quantity, r.due_date, DATEDIFF(r.due_date, CURRENT_DATE()) AS days_remaining,
             e.name AS equipment_name, e.equipment_code
      FROM borrow_requests r JOIN equipment e ON r.equipment_id = e.id
      WHERE r.user_id = ? AND r.status = 'borrowed'
@@ -157,7 +157,7 @@ require __DIR__ . '/../includes/header.php';
                                     &mdash;
                                 <?php endif; ?>
                             </td>
-                            <td><span class="status status-<?= escape($status) ?>"><?= escape(match ($status) { 'reserved' => 'Awaiting collection', 'expired' => 'Collection expired', default => ucfirst($status) }) ?></span></td>
+                            <td><span class="status status-<?= escape($status) ?>"><?= escape(match ($status) { 'returned' => $request['has_missing'] ? 'Closed with missing units' : 'Returned', 'reserved' => 'Awaiting collection', 'expired' => 'Collection expired', default => ucfirst($status) }) ?></span></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>

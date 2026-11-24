@@ -128,7 +128,8 @@ $equipmentStatement->execute([$user['id']]);
 $equipmentOptions = $equipmentStatement->fetchAll();
 
 $statement = $database->prepare(
-    "SELECT r.id, r.equipment_id, r.quantity, r.status, r.collection_deadline,
+    "SELECT r.id, r.equipment_id, r.quantity, r.settled_quantity, r.status, r.collection_deadline,
+            EXISTS (SELECT 1 FROM loan_settlements ls WHERE ls.request_id = r.id AND ls.outcome = 'missing') AS has_missing,
             (SELECT COUNT(*) + 1 FROM borrow_requests w WHERE w.equipment_id = r.equipment_id
                 AND w.status = 'waitlisted' AND w.id < r.id) AS queue_position,
             DATE(r.request_date) AS requested_on,
@@ -206,7 +207,12 @@ require __DIR__ . '/../includes/header.php';
                             <?php endif; ?>
                             <small class="table-note"><?= escape($request['equipment_code']) ?></small>
                         </td>
-                        <td><?= (int) $request['quantity'] ?></td>
+                        <td>
+                            <?= (int) $request['quantity'] ?>
+                            <?php if ($request['status'] === 'borrowed'): ?>
+                                <small class="table-note"><?= (int) $request['quantity'] - (int) $request['settled_quantity'] ?> outstanding</small>
+                            <?php endif; ?>
+                        </td>
                         <td>
                             <div>Requested <time><?= escape($request['requested_on']) ?></time></div>
                             <div>Preferred <time><?= escape($request['preferred_date']) ?></time></div>
@@ -236,7 +242,7 @@ require __DIR__ . '/../includes/header.php';
                             <?php if ($request['is_overdue']): ?>
                                 <span class="status status-overdue">Overdue</span>
                             <?php else: ?>
-                                <span class="status status-<?= escape($request['status']) ?>"><?= escape($statusOptions[$request['status']]) ?></span>
+                                <span class="status status-<?= escape($request['status']) ?>"><?= escape($request['status'] === 'returned' && $request['has_missing'] ? 'Closed with missing units' : $statusOptions[$request['status']]) ?></span>
                             <?php endif; ?>
                             <?php if ($request['status'] === 'waitlisted'): ?>
                                 <small class="table-note">Position <?= (int) $request['queue_position'] ?></small>

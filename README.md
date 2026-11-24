@@ -70,7 +70,7 @@ Sign in using that email and the original password. The account opens the staff 
 
 1. **Student** · Open **Equipment**. Search by name or code, filter by category, and open an item. Enter a quantity, preferred date, and reason, then submit. **My requests** shows pending requests, active loans, and history. A student can cancel their own pending requests.
 2. **Staff** · Open **Requests**. Review the student and equipment details. Enter a return due date and select **Approve and issue** when handing over the equipment, or choose **Reject**.
-3. **Staff** · Open **Returns** when equipment comes back. Enter the full returned quantity and select **Confirm return**. Use **Overdue only** to find outstanding loans past their due date. Use **View return history** to find completed returns.
+3. **Staff** · Open **Returns** when equipment comes back. Enter the number of units, choose an outcome, and select **Record outcome**. Repeat as needed until all issued units are accounted for. Use **Overdue only** to find outstanding loans past their due date. Use **View return history** to find completed returns.
 
 Staff use **Equipment** to add, edit, or remove inventory. Quantity edits account for checked-out units. Pending requests and active loans block removal. Equipment with completed history is archived and stays in borrowing records.
 
@@ -107,7 +107,7 @@ Start with the sample inventory in a fresh local database. Use separate browser 
 | Approve and issue the request for two multimeters | It becomes **Borrowed**, its due date appears, and available stock falls from eight to six. |
 | Use two different student accounts to request four units each of a five-unit item, then approve from two staff sessions | Only one issues equipment. The other stays pending and one unit remains available. |
 | Verify a loan due today and one due yesterday in the overdue view | Only the outstanding loan due yesterday is overdue. The view shows one day overdue. |
-| Enter one unit for a two-unit loan, then confirm with two | The partial return is rejected. The full return restores stock, changes the status to **Returned**, and appears in history. A repeat submission leaves stock unchanged. |
+| Record one unit for a two-unit loan, then record the remaining unit | Stock increases by one at each return. The loan stays open after the first return and closes after the second. Resubmitting the first form is rejected. |
 | Remove equipment with past requests after all active loans and pending requests are resolved | Staff see it as **Archived**. It is hidden from the student catalog, and its records are still in history. |
 | Mark equipment under maintenance, then submit an already-open request form or try to approve a pending request | Both actions are blocked. Existing loans can still be returned. |
 | Try to issue more than five active units to the same student, including competing approvals for different equipment | The approval exceeding the configured limit is rejected. |
@@ -284,3 +284,52 @@ CREATE TABLE IF NOT EXISTS stock_adjustments (
 
 
 To test the workflow, reserve the last available units, add two students to the waitlist, and confirm the second student cannot receive the units ahead of the first. In a test database, set the reservation deadline to a past time and refresh a signed-in page. The reservation should expire and release stock once. Enable tags on an item, issue its units, and check that an incorrect tag is rejected at return.
+
+## Partial returns, damaged or missing units, and staff activity
+
+- **Partial returns.** In **Returns**, record any quantity up to the outstanding amount. For tagged equipment, enter the exact tags for that batch. The loan stays open for its outstanding units. The borrowing slip shows each recorded outcome.
+- **Damaged or missing units.** Record each outcome as a separate batch. A damaged return goes to the repair hold and stays unavailable for lending. From **Equipment**, open the **held for repair** link to mark units repaired or discard them with a reason. A missing unit reduces total stock and retires its tag, if it has one. A loan closes when every issued unit is accounted for.
+- **Staff activity.** Open **Dashboard → Staff activity** to see account decisions, request decisions, pickups, issues, extensions, return outcomes, and damage resolutions. The log starts recording after this update. Quantity adjustments remain available in **Equipment → Stock history**.
+
+### Upgrade for return outcomes and staff activity
+
+If your database already has individual asset tracking, run the following once in the labriqo database in phpMyAdmin. Existing completed loans keep their original close dates and condition notes. A fresh database import includes the new tables.
+
+```sql
+ALTER TABLE equipment
+    ADD COLUMN damaged_quantity INT NOT NULL DEFAULT 0,
+    ADD CONSTRAINT equipment_damaged_range CHECK (damaged_quantity >= 0 AND damaged_quantity <= total_quantity - available_quantity);
+
+ALTER TABLE equipment_assets ADD COLUMN is_damaged TINYINT(1) NOT NULL DEFAULT 0;
+
+ALTER TABLE borrow_requests
+    ADD COLUMN settled_quantity INT NOT NULL DEFAULT 0,
+    ADD CONSTRAINT loan_settled_quantity CHECK (settled_quantity BETWEEN 0 AND quantity);
+
+UPDATE borrow_requests SET settled_quantity = quantity WHERE status = 'returned';
+
+CREATE TABLE IF NOT EXISTS loan_settlements (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    request_id INT UNSIGNED NOT NULL,
+    staff_id INT UNSIGNED NOT NULL,
+    quantity INT NOT NULL,
+    outcome ENUM('returned', 'damaged', 'missing') NOT NULL,
+    condition_note VARCHAR(1000) NOT NULL,
+    asset_tags TEXT DEFAULT NULL,
+    recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (request_id) REFERENCES borrow_requests (id),
+    FOREIGN KEY (staff_id) REFERENCES users (id),
+    CHECK (quantity > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS staff_activity (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    staff_id INT UNSIGNED NOT NULL,
+    action_name VARCHAR(80) NOT NULL,
+    target_type VARCHAR(30) NOT NULL,
+    target_id INT UNSIGNED NOT NULL,
+    detail VARCHAR(500) DEFAULT NULL,
+    recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (staff_id) REFERENCES users (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```

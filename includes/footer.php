@@ -5,7 +5,7 @@
     </div>
     <article class="panel borrowing-slip" aria-labelledby="slip-title">
         <h1 id="slip-title">Labriqo borrowing slip</h1>
-        <p>Request #<?= (int) $borrowingSlip['id'] ?> · <?= escape(ucfirst($borrowingSlip['status'])) ?></p>
+        <p>Request #<?= (int) $borrowingSlip['id'] ?> · <?= escape($borrowingSlip['status'] === 'returned' && in_array('missing', array_column($borrowingSlip['settlements'], 'outcome'), true) ? 'Closed with missing units' : ucfirst($borrowingSlip['status'])) ?></p>
         <h2>Student</h2>
         <dl class="details">
             <div><dt>Full name</dt><dd><?= escape($borrowingSlip['student_name']) ?></dd></div>
@@ -23,13 +23,28 @@
             <?php endif; ?>
             <div><dt>Issued on</dt><dd><?= escape($borrowingSlip['issue_date'] ?? 'Not recorded') ?></dd></div>
             <div><dt>Return due date</dt><dd><?= escape($borrowingSlip['due_date'] ?? 'Not recorded') ?></dd></div>
-            <div><dt>Returned on</dt><dd><?= escape($borrowingSlip['return_date'] ?? 'Awaiting return') ?></dd></div>
+            <div><dt>Loan closed on</dt><dd><?= escape($borrowingSlip['return_date'] ?? 'Awaiting return') ?></dd></div>
         </dl>
         <h2>Equipment condition</h2>
         <dl class="details">
             <div><dt>At issue</dt><dd><?= escape($borrowingSlip['issue_condition'] ?? 'Not recorded') ?></dd></div>
             <div><dt>At return</dt><dd><?= escape($borrowingSlip['return_condition'] ?? 'Not recorded') ?></dd></div>
         </dl>
+        <?php if ($borrowingSlip['settlements'] !== []): ?>
+            <h2>Return and loss records</h2>
+            <ul>
+                <?php foreach ($borrowingSlip['settlements'] as $event): ?>
+                    <li>
+                        <?= (int) $event['quantity'] ?> · <?= escape(ucfirst($event['outcome'])) ?> · <?= escape($event['recorded_at']) ?>
+                        <?php if ($event['asset_tags'] !== null): ?> · <?= escape($event['asset_tags']) ?><?php endif; ?>
+                        <p class="request-reason"><?= escape($event['condition_note']) ?></p>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+        <?php if ($borrowingSlip['status'] === 'borrowed'): ?>
+            <p>Units outstanding <?= (int) $borrowingSlip['quantity'] - (int) $borrowingSlip['settled_quantity'] ?></p>
+        <?php endif; ?>
         <h2>Borrowing reason</h2>
         <p class="request-reason"><?= escape($borrowingSlip['reason']) ?></p>
     </article>

@@ -11,7 +11,7 @@ function assignLoanAssets(PDO $database, int $requestId, int $equipmentId, int $
 
     $find = $database->prepare(
         'SELECT id FROM equipment_assets WHERE equipment_id = ? AND asset_tag = ?
-         AND retired_at IS NULL AND current_request_id IS NULL'
+         AND retired_at IS NULL AND current_request_id IS NULL AND is_damaged = 0'
     );
     $assign = $database->prepare('UPDATE equipment_assets SET current_request_id = ? WHERE id = ?');
     $history = $database->prepare('INSERT INTO loan_assets (request_id, asset_id) VALUES (?, ?)');
@@ -29,7 +29,7 @@ function assignLoanAssets(PDO $database, int $requestId, int $equipmentId, int $
     }
 }
 
-function approveRequest(PDO $database, int $requestId, string $dueDate, string $condition, string $decision, string $assetTags): void
+function approveRequest(PDO $database, int $requestId, string $dueDate, string $condition, string $decision, string $assetTags, int $staffId): void
 {
     $lookup = $database->prepare('SELECT equipment_id, user_id FROM borrow_requests WHERE id = ?');
     $lookup->execute([$requestId]);
@@ -117,6 +117,7 @@ function approveRequest(PDO $database, int $requestId, string $dueDate, string $
             $issue->execute([$request['today'], $request['today'], $dueDate, $condition, $requestId]);
         }
 
+        recordStaffActivity($database, $staffId, $reserving ? 'Reserved for pickup' : 'Equipment issued', 'Loan', $requestId);
         $database->commit();
     } catch (Throwable $exception) {
         if ($database->inTransaction()) {
@@ -126,7 +127,7 @@ function approveRequest(PDO $database, int $requestId, string $dueDate, string $
     }
 }
 
-function reviewExtension(PDO $database, int $requestId, int $version, string $decision, string $note): void
+function reviewExtension(PDO $database, int $requestId, int $version, string $decision, string $note, int $staffId): void
 {
     if (!in_array($decision, ['approve', 'reject'], true)
         || ($note !== '' && !validText($note, 1000)) || ($decision === 'reject' && $note === '')) {
@@ -159,6 +160,7 @@ function reviewExtension(PDO $database, int $requestId, int $version, string $de
              extension_review_note = ?, extension_decided_at = CURRENT_TIMESTAMP() WHERE id = ?'
         );
         $update->execute([$newDueDate, $status, $note === '' ? null : $note, $requestId]);
+        recordStaffActivity($database, $staffId, $decision === 'approve' ? 'Extension approved' : 'Extension rejected', 'Loan', $requestId);
         $database->commit();
     } catch (Throwable $exception) {
         if ($database->inTransaction()) {
@@ -194,7 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') === 'extension'
         if ($requestId === false || $version === false) {
             throw new DomainException('Choose a valid pending extension.');
         }
-        reviewExtension($database, $requestId, $version, formValue('decision'), trim(formValue('extension_review_note')));
+        reviewExtension($database, $requestId, $version, formValue('decision'), trim(formValue('extension_review_note')), $user['id']);
         $_SESSION['notice'] = 'Extension decision saved.';
         redirect('requests.php?status=extensions');
     } catch (DomainException $exception) {
@@ -221,19 +223,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && formValue('action') !== 'extension'
     } else {
         try {
             if ($decision !== 'reject') {
-                approveRequest($database, $requestId, $dueDate, $condition, $decision, formValue('asset_tags'));
+                approveRequest($database, $requestId, $dueDate, $condition, $decision, formValue('asset_tags'), $user['id']);
                 $_SESSION['notice'] = $decision === 'reserve'
                     ? 'Equipment reserved for 48 hours.'
                     : 'Equipment issued.';
             } else {
-                $reject = $database->prepare(
-                    "UPDATE borrow_requests SET status = 'rejected', rejection_reason = ?
-                     WHERE id = ? AND status IN ('pending', 'waitlisted')"
-                );
-                $reject->execute([$rejectionReason, $requestId]);
-
-                if ($reject->rowCount() !== 1) {
-                    throw new DomainException('Only pending or waitlisted requests can be rejected.');
+                $database->beginTransaction();
+                try {
+                    $reject = $database->prepare(
+                        "UPDATE borrow_requests SET status = 'rejected', rejection_reason = ?
+                         WHERE id = ? AND status IN ('pending', 'waitlisted')"
+                    );
+                    $reject->execute([$rejectionReason, $requestId]);
+                    if ($reject->rowCount() !== 1) {
+                        throw new DomainException('Only pending or waitlisted requests can be rejected.');
+                    }
+                    recordStaffActivity($database, $user['id'], 'Request rejected', 'Loan', $requestId);
+                    $database->commit();
+                } catch (Throwable $exception) {
+                    if ($database->inTransaction()) {
+                        $database->rollBack();
+                    }
+                    throw $exception;
                 }
                 $_SESSION['notice'] = 'Request rejected.';
             }
@@ -273,7 +284,7 @@ if ($studentId !== '' && !validText($studentId, 30)) {
 } else {
     $equipmentFilter = $equipmentId === false ? null : $equipmentId;
     $statement = $database->prepare(
-        "SELECT r.id, r.status, r.quantity, r.reason, r.collection_deadline, DATE(r.request_date) AS requested_on,
+        "SELECT r.id, r.status, r.quantity, r.settled_quantity, r.reason, r.collection_deadline, (EXISTS (SELECT 1 FROM loan_settlements ls WHERE ls.request_id = r.id AND ls.outcome = 'missing')) AS has_missing, DATE(r.request_date) AS requested_on,
                 r.extension_due_date, r.extension_reason, r.extension_status, r.extension_version, r.extension_review_note,
                 r.preferred_date, r.approval_date, r.issue_date, r.issue_condition, r.return_condition, r.due_date, r.return_date, r.rejection_reason,
                 u.name AS student_name, u.student_id, u.department, u.email,
@@ -303,6 +314,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv' && $e
         'equipment_name' => 'Equipment name',
         'asset_tags' => 'Asset tags',
         'quantity' => 'Quantity',
+        'settled_quantity' => 'Units returned or accounted for',
         'reason' => 'Borrowing reason',
         'status' => 'Status',
         'requested_on' => 'Request date',
@@ -421,7 +433,7 @@ require __DIR__ . '/../includes/header.php';
                             <?php endif; ?>
                         </td>
                         <td>
-                            <span class="status status-<?= escape($request['status']) ?>"><?= escape($statusOptions[$request['status']]) ?></span>
+                            <span class="status status-<?= escape($request['status']) ?>"><?= escape($request['status'] === 'returned' && $request['has_missing'] ? 'Closed with missing units' : $statusOptions[$request['status']]) ?></span>
                             <?php if ($request['status'] === 'rejected'): ?>
                                 <p class="request-reason"><?= escape($request['rejection_reason'] ?? 'No reason recorded.') ?></p>
                             <?php endif; ?>

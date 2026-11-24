@@ -241,6 +241,23 @@ function paginate(PDO $database, PDOStatement $statement, array $parameters, boo
 }
 
 
+function recordStaffActivity(PDO $database, int $staffId, string $action, string $target, int $targetId, ?string $detail = null): void
+{
+    $statement = $database->prepare(
+        'INSERT INTO staff_activity (staff_id, action_name, target_type, target_id, detail) VALUES (?, ?, ?, ?, ?)'
+    );
+    $statement->execute([$staffId, $action, $target, $targetId, $detail]);
+}
+
+function recordStockAdjustment(PDO $database, int $equipmentId, int $staffId, int $before, int $after, string $reason): void
+{
+    $statement = $database->prepare(
+        'INSERT INTO stock_adjustments (equipment_id, staff_id, previous_total, new_total, reason)
+         VALUES (?, ?, ?, ?, ?)'
+    );
+    $statement->execute([$equipmentId, $staffId, $before, $after, $reason]);
+}
+
 function expireReservations(PDO $database): void
 {
     $equipmentIds = $database->query(
@@ -283,7 +300,7 @@ function expireReservations(PDO $database): void
 function borrowedUnits(PDO $database, int $studentId): int
 {
     $statement = $database->prepare(
-        "SELECT COALESCE(SUM(quantity), 0) FROM borrow_requests WHERE user_id = ? AND status IN ('borrowed', 'reserved')"
+        "SELECT COALESCE(SUM(quantity - settled_quantity), 0) FROM borrow_requests WHERE user_id = ? AND status IN ('borrowed', 'reserved')"
     );
     $statement->execute([$studentId]);
     return (int) $statement->fetchColumn();
@@ -293,7 +310,7 @@ function getBorrowingSlip(PDO $database, array $user, string $requestId): array
 {
     $id = filter_var($requestId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     $statement = $database->prepare(
-        "SELECT r.id, r.quantity, r.reason, r.status, r.issue_date, r.due_date, r.return_date, r.issue_condition, r.return_condition,
+        "SELECT r.id, r.quantity, r.settled_quantity, r.reason, r.status, r.issue_date, r.due_date, r.return_date, r.issue_condition, r.return_condition,
                 u.name AS student_name, u.student_id, u.department, u.email,
                 e.name AS equipment_name, e.equipment_code,
                 (SELECT GROUP_CONCAT(a.asset_tag ORDER BY a.asset_tag SEPARATOR ', ')
@@ -311,5 +328,11 @@ function getBorrowingSlip(PDO $database, array $user, string $requestId): array
         exit('This borrowing slip is unavailable.');
     }
 
+    $events = $database->prepare(
+        'SELECT quantity, outcome, condition_note, asset_tags, recorded_at
+         FROM loan_settlements WHERE request_id = ? ORDER BY id'
+    );
+    $events->execute([$slip['id']]);
+    $slip['settlements'] = $events->fetchAll();
     return $slip;
 }
