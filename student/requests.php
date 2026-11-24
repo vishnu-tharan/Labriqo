@@ -144,7 +144,7 @@ $statement = $database->prepare(
 );
 $pagination = paginate($database, $statement, [
     $user['id'], $equipmentFilter, $equipmentFilter, $status, $status, $status,
-]);
+], pageSize: 15);
 $requests = $pagination['records'];
 
 require __DIR__ . '/../includes/header.php';
@@ -192,7 +192,7 @@ require __DIR__ . '/../includes/header.php';
                     <th scope="col">Quantity</th>
                     <th scope="col">Dates</th>
                     <th scope="col">Status</th>
-                    <th scope="col">Action</th>
+                    <th scope="col" class="print-hide">Action</th>
                 </tr>
             </thead>
             <tbody>
@@ -251,7 +251,7 @@ require __DIR__ . '/../includes/header.php';
                                 <p class="request-reason"><?= escape($request['rejection_reason'] ?? 'No reason recorded.') ?></p>
                             <?php endif; ?>
                         </td>
-                        <td>
+                        <td class="print-hide">
                             <?php if (in_array($request['status'], ['pending', 'waitlisted'], true)): ?>
                                 <form method="post">
                                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">

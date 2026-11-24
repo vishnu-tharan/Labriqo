@@ -312,7 +312,7 @@ function downloadCsv(string $filename, array $columns, array $records): void
 }
 
 
-function paginate(PDO $database, PDOStatement $statement, array $parameters, bool $allRecords = false): array
+function paginate(PDO $database, PDOStatement $statement, array $parameters, bool $allRecords = false, int $pageSize = 10): array
 {
     if ($allRecords) {
         $statement->execute($parameters);
@@ -322,12 +322,12 @@ function paginate(PDO $database, PDOStatement $statement, array $parameters, boo
     $count = $database->prepare('SELECT COUNT(*) FROM (' . $statement->queryString . ') AS filtered_records');
     $count->execute($parameters);
     $total = (int) $count->fetchColumn();
-    $pages = max(1, (int) ceil($total / 10));
+    $pages = max(1, (int) ceil($total / $pageSize));
     $requestedPage = filter_var(queryValue('page'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
     $page = min($requestedPage === false ? 1 : $requestedPage, $pages);
-    $offset = ($page - 1) * 10;
+    $offset = ($page - 1) * $pageSize;
 
-    $limited = $database->prepare($statement->queryString . ' LIMIT 10 OFFSET ' . $offset);
+    $limited = $database->prepare($statement->queryString . ' LIMIT ' . $pageSize . ' OFFSET ' . $offset);
     $limited->execute($parameters);
 
     return ['records' => $limited->fetchAll(), 'page' => $page, 'pages' => $pages];

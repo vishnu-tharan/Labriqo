@@ -22,10 +22,10 @@ $statement->execute([$user['id']]);
 $totals = $statement->fetch();
 
 $summary = [
-    'Equipment types in stock' => $availableTypes,
-    'Pending requests' => $totals['pending_requests'],
-    'Borrowed units' => $totals['borrowed_units'],
-    'Overdue loans' => $totals['overdue_loans'],
+    'Equipment types in stock' => [$availableTypes, 'equipment.php?available=1'],
+    'Pending requests' => [$totals['pending_requests'], 'requests.php?status=pending'],
+    'Borrowed units' => [$totals['borrowed_units'], 'requests.php?status=borrowed'],
+    'Overdue loans' => [$totals['overdue_loans'], 'requests.php?status=overdue'],
 ];
 
 $statement = $database->prepare(
@@ -53,6 +53,13 @@ $dueSoon = $statement->fetchAll();
 
 require __DIR__ . '/../includes/header.php';
 ?>
+<?php $overdueCount = (int) $totals['overdue_loans']; ?>
+<?php if ($overdueCount > 0): ?>
+    <div class="notice notice-error dashboard-alert">
+        <strong><?= $overdueCount ?> overdue <?= $overdueCount === 1 ? 'loan' : 'loans' ?>.</strong>
+        <a href="requests.php?status=overdue">View overdue loans</a>
+    </div>
+<?php endif; ?>
 <div class="page-heading page-actions dashboard-heading">
     <div>
         <h1>Student dashboard</h1>
@@ -62,14 +69,15 @@ require __DIR__ . '/../includes/header.php';
     <a class="button" href="equipment.php">Browse equipment</a>
 </div>
 
-<dl class="dashboard-stats" aria-label="Your borrowing summary">
-    <?php foreach ($summary as $label => $value): ?>
-        <div class="stat-card">
-            <dt><?= escape($label) ?></dt>
-            <dd><?= number_format((int) $value) ?></dd>
-        </div>
+<div class="dashboard-stats" role="group" aria-label="Your borrowing summary">
+    <?php foreach ($summary as $label => [$value, $url]): ?>
+        <a class="stat-card<?= $label === 'Overdue loans' && (int) $value > 0 ? ' stat-card-overdue' : '' ?>"
+           href="<?= escape($url) ?>">
+            <span class="stat-label"><?= escape($label) ?></span>
+            <strong class="stat-value"><?= number_format((int) $value) ?></strong>
+        </a>
     <?php endforeach; ?>
-</dl>
+</div>
 
 <?php if ($dueSoon !== []): ?>
     <section class="return-reminders" aria-labelledby="reminder-title">

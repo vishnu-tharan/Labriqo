@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS loan_settlements (
     request_id INT UNSIGNED NOT NULL,
     staff_id INT UNSIGNED NOT NULL,
     quantity INT NOT NULL,
-    outcome ENUM('returned', 'damaged', 'missing') NOT NULL,
+    outcome ENUM('returned', 'damaged', 'missing', 'inspection') NOT NULL,
     condition_note VARCHAR(1000) NOT NULL,
     asset_tags TEXT DEFAULT NULL,
     recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

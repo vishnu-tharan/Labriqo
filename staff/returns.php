@@ -42,6 +42,7 @@ function recordReturn(PDO $database, int $requestId, int $returnedQuantity, stri
             throw new DomainException('The current stock count does not allow this return. Check the equipment inventory.');
         }
 
+        $holdForRepair = in_array($outcome, ['inspection', 'damaged'], true);
         $confirmed = [];
         if ($item['tracks_assets']) {
             $issued = $database->prepare(
@@ -61,7 +62,7 @@ function recordReturn(PDO $database, int $requestId, int $returnedQuantity, stri
                  WHERE equipment_id = ? AND current_request_id = ? AND asset_tag = ?'
             );
             foreach ($confirmed as $tag) {
-                $release->execute([(int) ($outcome === 'damaged'), (int) ($outcome === 'missing'), $equipmentId, $requestId, $tag]);
+                $release->execute([(int) $holdForRepair, (int) ($outcome === 'missing'), $equipmentId, $requestId, $tag]);
                 if ($release->rowCount() !== 1) {
                     throw new DomainException('The tagged assets do not match the current loan.');
                 }
@@ -74,7 +75,7 @@ function recordReturn(PDO $database, int $requestId, int $returnedQuantity, stri
         );
         $stockChange->execute([
             $outcome === 'returned' ? $returnedQuantity : 0,
-            $outcome === 'damaged' ? $returnedQuantity : 0,
+            $holdForRepair ? $returnedQuantity : 0,
             $outcome === 'missing' ? $returnedQuantity : 0,
             $equipmentId,
         ]);
@@ -88,7 +89,7 @@ function recordReturn(PDO $database, int $requestId, int $returnedQuantity, stri
              VALUES (?, ?, ?, ?, ?, ?)"
         );
         $event->execute([$requestId, $staffId, $returnedQuantity, $outcome, $condition, $confirmed === [] ? null : implode(', ', $confirmed)]);
-        $progress = $database->prepare('UPDATE borrow_requests SET settled_quantity = ?, return_condition = ? WHERE id = ?');
+        $progress = $database->prepare('UPDATE borrow_requests SET settled_quantity = ?, return_condition = COALESCE(NULLIF(?, \'\'), return_condition) WHERE id = ?');
         $progress->execute([$settled + $returnedQuantity, $condition, $requestId]);
 
         if ($returnedQuantity === $remaining) {
@@ -106,6 +107,7 @@ function recordReturn(PDO $database, int $requestId, int $returnedQuantity, stri
         $closeExtension->execute([$requestId]);
 
         $action = match ($outcome) {
+            'inspection' => 'Return held for inspection',
             'damaged' => 'Damaged return recorded',
             'missing' => 'Missing units recorded',
             default => 'Return recorded',
@@ -136,10 +138,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $expectedSettled = filter_var(formValue('settled_quantity'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
     if ($requestId === false || $quantity === false || $expectedSettled === false) {
         $errors[] = 'Choose an active loan and enter a whole returned quantity of at least 1.';
-    } elseif (!in_array($outcome, ['returned', 'damaged', 'missing'], true)) {
+    } elseif (!in_array($outcome, ['returned', 'inspection', 'damaged', 'missing'], true)) {
         $errors[] = 'Choose a valid outcome.';
-    } elseif (!validText($condition, 1000)) {
-        $errors[] = 'Enter the condition at return, up to 1,000 characters.';
+    } elseif ($outcome === 'missing' && $condition === '') {
+        $errors[] = 'Enter a reason when recording missing equipment.';
+    } elseif ($condition !== '' && !validText($condition, 1000)) {
+        $errors[] = 'Keep the note to 1,000 characters.';
     } else {
         try {
             recordReturn($database, $requestId, $quantity, $condition, formValue('asset_tags'), $expectedSettled, $user['id'], $outcome);
@@ -170,7 +174,7 @@ if ($studentId !== '' && !validText($studentId, 30)) {
            AND (? = 'all' OR r.due_date < CURRENT_DATE())
          ORDER BY r.due_date IS NULL, r.due_date, r.id"
     );
-    $pagination = paginate($database, $statement, [$studentId, $view]);
+    $pagination = paginate($database, $statement, [$studentId, $view], pageSize: 15);
     $loans = $pagination['records'];
 }
 
@@ -208,7 +212,7 @@ require __DIR__ . '/../includes/header.php';
                     <th scope="col">Equipment</th>
                     <th scope="col">Units outstanding</th>
                     <th scope="col">Due date</th>
-                    <th scope="col">Return</th>
+                    <th scope="col" class="print-hide">Return</th>
                 </tr>
             </thead>
             <tbody>
@@ -242,7 +246,7 @@ require __DIR__ . '/../includes/header.php';
                                 </div>
                             <?php endif; ?>
                         </td>
-                        <td>
+                        <td class="print-hide">
                             <form method="post" class="loan-action">
                                 <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
                                 <input type="hidden" name="request_id" value="<?= (int) $loan['id'] ?>">
@@ -250,14 +254,15 @@ require __DIR__ . '/../includes/header.php';
                                 <label for="quantity-<?= (int) $loan['id'] ?>">Units to record</label>
                                 <input id="quantity-<?= (int) $loan['id'] ?>" name="returned_quantity" type="number"
                                        min="1" max="<?= (int) $loan['quantity'] ?>" required>
-                                <label for="outcome-<?= (int) $loan['id'] ?>">Outcome</label>
+                                <label for="outcome-<?= (int) $loan['id'] ?>">Return condition</label>
                                 <select id="outcome-<?= (int) $loan['id'] ?>" name="outcome">
-                                    <option value="returned">Returned, ready to lend</option>
-                                    <option value="damaged">Returned, damaged</option>
+                                    <option value="returned">Good</option>
+                                    <option value="inspection">Needs inspection</option>
+                                    <option value="damaged">Damaged</option>
                                     <option value="missing">Missing</option>
                                 </select>
-                                <label for="return-condition-<?= (int) $loan['id'] ?>">Condition or reason</label>
-                                <textarea id="return-condition-<?= (int) $loan['id'] ?>" name="return_condition" rows="2" maxlength="1000" required></textarea>
+                                <label for="return-condition-<?= (int) $loan['id'] ?>">Notes (required for missing units)</label>
+                                <textarea id="return-condition-<?= (int) $loan['id'] ?>" name="return_condition" rows="2" maxlength="1000"></textarea>
                                 <?php if ($loan['asset_tags'] !== null): ?>
                                     <label for="return-assets-<?= (int) $loan['id'] ?>">Asset tags for this outcome, separated by commas</label>
                                     <input id="return-assets-<?= (int) $loan['id'] ?>" name="asset_tags" required>

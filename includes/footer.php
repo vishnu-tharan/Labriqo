@@ -41,9 +41,11 @@ if (!isset($pageTitle)) {
             <ul>
                 <?php foreach ($borrowingSlip['settlements'] as $event): ?>
                     <li>
-                        <?= (int) $event['quantity'] ?> · <?= escape(ucfirst($event['outcome'])) ?> · <?= escape($event['recorded_at']) ?>
+                        <?= (int) $event['quantity'] ?> · <?= escape(match ($event['outcome']) { 'returned' => 'Good', 'inspection' => 'Needs inspection', default => ucfirst($event['outcome']) }) ?> · <?= escape($event['recorded_at']) ?>
                         <?php if ($event['asset_tags'] !== null): ?> · <?= escape($event['asset_tags']) ?><?php endif; ?>
-                        <p class="request-reason"><?= escape($event['condition_note']) ?></p>
+                        <?php if ($event['condition_note'] !== ''): ?>
+                            <p class="request-reason"><?= escape($event['condition_note']) ?></p>
+                        <?php endif; ?>
                     </li>
                 <?php endforeach; ?>
             </ul>

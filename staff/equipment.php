@@ -237,7 +237,10 @@ $database = db();
 $errors = [];
 
 $mode = queryValue('mode');
-if (!in_array($mode, ['add', 'edit', 'remove', 'categories', 'stock_history', 'assets', 'damage'], true)) {
+if ($mode === 'categories') {
+    redirect('categories.php');
+}
+if (!in_array($mode, ['add', 'edit', 'remove', 'stock_history', 'assets', 'damage'], true)) {
     $mode = 'list';
 }
 
@@ -259,51 +262,6 @@ if (in_array($mode, ['edit', 'remove', 'assets', 'damage'], true)) {
     }
 }
 
-$categoryName = '';
-$categoryEditId = false;
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode === 'categories') {
-    checkCsrf();
-    $categoryName = trim(formValue('category_name'));
-    $action = formValue('action');
-    $categoryEditId = filter_var(formValue('category_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-
-    if (!validText($categoryName, 80)) {
-        $errors[] = 'Enter a category name of up to 80 characters.';
-    } elseif (!in_array($action, ['add', 'rename'], true) || ($action === 'rename' && $categoryEditId === false)) {
-        $errors[] = 'Choose a valid category action.';
-    } else {
-        try {
-            if ($action === 'add') {
-                $database->prepare('INSERT INTO categories (name) VALUES (?)')->execute([$categoryName]);
-                $notice = 'Category added.';
-            } else {
-                $rename = $database->prepare('UPDATE categories SET name = ? WHERE id = ?');
-                $rename->execute([$categoryName, $categoryEditId]);
-
-                if ($rename->rowCount() === 0) {
-                    $exists = $database->prepare('SELECT id FROM categories WHERE id = ?');
-                    $exists->execute([$categoryEditId]);
-                    if ($exists->fetchColumn() === false) {
-                        throw new DomainException('This category is unavailable.');
-                    }
-                }
-                $notice = 'Category updated.';
-            }
-
-            $_SESSION['notice'] = $notice;
-            redirect('equipment.php?mode=categories');
-        } catch (DomainException $exception) {
-            $errors[] = $exception->getMessage();
-        } catch (PDOException $exception) {
-            if (($exception->errorInfo[1] ?? null) !== 1062) {
-                throw $exception;
-            }
-            $errors[] = 'That category name is already in use.';
-        }
-    }
-}
-
 $categoryNames = $database->query('SELECT id, name FROM categories ORDER BY name')->fetchAll(PDO::FETCH_KEY_PAIR);
 $fields = [
     'equipment_code' => '',
@@ -322,7 +280,7 @@ if ($mode === 'edit') {
     }
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (in_array($mode, ['list', 'stock_history'], true)) {
         header('Allow: GET');
         http_response_code(405);
@@ -416,6 +374,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $mode !== 'categories') {
 if ($mode === 'list') {
     $search = trim(queryValue('q'));
     $categoryId = filter_var(queryValue('category'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    $activeOnly = queryValue('active') === '1';
     $equipment = [];
 
     if ($search !== '' && !validText($search, 120)) {
@@ -427,9 +386,10 @@ if ($mode === 'list') {
              FROM equipment e JOIN categories c ON e.category_id = c.id
              WHERE (LOCATE(?, e.name) > 0 OR LOCATE(?, e.equipment_code) > 0)
                AND (? IS NULL OR e.category_id = ?)
+               AND (? = 0 OR e.is_active = 1)
              ORDER BY e.is_active DESC, e.name, e.equipment_code'
         );
-        $pagination = paginate($database, $statement, [$search, $search, $categoryFilter, $categoryFilter], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv');
+        $pagination = paginate($database, $statement, [$search, $search, $categoryFilter, $categoryFilter, (int) $activeOnly], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv');
         $equipment = $pagination['records'];
     }
 }
@@ -489,7 +449,7 @@ require __DIR__ . '/../includes/header.php';
     <div class="page-heading page-actions">
         <h1>Equipment inventory</h1>
         <div class="form-actions">
-            <a href="equipment.php?mode=categories">Manage categories</a>
+            <a href="categories.php">Manage categories</a>
             <a href="equipment.php?mode=stock_history">Stock history</a>
             <a class="button" href="equipment.php?mode=add">Add equipment</a>
         </div>
@@ -511,9 +471,13 @@ require __DIR__ . '/../includes/header.php';
                 <?php endforeach; ?>
             </select>
         </div>
+        <label class="filter-checkbox">
+            <input type="checkbox" name="active" value="1" <?= $activeOnly ? 'checked' : '' ?>>
+            Active only
+        </label>
         <button class="button" type="submit">Search</button>
         <button class="button" type="submit" name="export" value="csv">Download CSV</button>
-        <?php if ($search !== '' || $categoryId !== false): ?>
+        <?php if ($search !== '' || $categoryId !== false || $activeOnly): ?>
             <a class="filter-reset" href="equipment.php">Clear filters</a>
         <?php endif; ?>
     </form>
@@ -548,7 +512,7 @@ require __DIR__ . '/../includes/header.php';
                                 <?= (int) $row['available_quantity'] ?> / <?= (int) $row['total_quantity'] ?>
                                 <?php if ($row['damaged_quantity'] > 0): ?>
                                     <small class="table-note">
-                                        <a href="equipment.php?mode=damage&amp;id=<?= (int) $row['id'] ?>"><?= (int) $row['damaged_quantity'] ?> held for repair</a>
+                                        <a href="equipment.php?mode=damage&amp;id=<?= (int) $row['id'] ?>"><?= (int) $row['damaged_quantity'] ?> held for inspection or repair</a>
                                     </small>
                                 <?php endif; ?>
                             </td>
@@ -576,12 +540,12 @@ require __DIR__ . '/../includes/header.php';
     <?php endif; ?>
 <?php elseif ($mode === 'damage'): ?>
     <div class="page-heading page-actions">
-        <h1>Units held for repair</h1>
+        <h1>Units held for inspection or repair</h1>
         <a href="equipment.php">Back to inventory</a>
     </div>
     <section class="panel form-panel" aria-labelledby="damage-heading">
         <h2 id="damage-heading"><?= escape($item['name']) ?></h2>
-        <p><?= (int) $item['damaged_quantity'] ?> units held for repair</p>
+        <p><?= (int) $item['damaged_quantity'] ?> units on hold</p>
         <?php if ($item['damaged_quantity'] > 0): ?>
             <form method="post" class="form-stack">
                 <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
@@ -602,7 +566,7 @@ require __DIR__ . '/../includes/header.php';
                     <input id="damage-reason" name="stock_reason" maxlength="500" required>
                 </div>
                 <div class="form-actions">
-                    <button class="button" type="submit" name="action" value="repair">Mark repaired</button>
+                    <button class="button" type="submit" name="action" value="repair">Clear hold and restock</button>
                     <button class="button button-danger" type="submit" name="action" value="discard">Discard damaged units</button>
                 </div>
             </form>
@@ -703,46 +667,6 @@ require __DIR__ . '/../includes/header.php';
             </table>
         </div>
     <?php endif; ?>
-<?php elseif ($mode === 'categories'): ?>
-    <div class="page-heading page-actions">
-        <h1>Equipment categories</h1>
-        <a href="equipment.php">Back to inventory</a>
-    </div>
-
-    <section class="panel form-panel" aria-labelledby="add-category-title">
-        <h2 id="add-category-title">Add category</h2>
-        <form method="post" class="form-stack">
-            <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
-            <input type="hidden" name="action" value="add">
-            <div class="field">
-                <label for="new-category">Category name</label>
-                <input id="new-category" name="category_name" maxlength="80"
-                       value="<?= $categoryEditId === false ? escape($categoryName) : '' ?>" required>
-            </div>
-            <button class="button" type="submit">Add category</button>
-        </form>
-    </section>
-
-    <section class="panel form-panel request-panel" aria-labelledby="rename-category-title">
-        <h2 id="rename-category-title">Rename categories</h2>
-        <p class="intro">A renamed category updates everywhere its equipment appears.</p>
-        <?php if ($categoryNames === []): ?>
-            <p>No categories have been added yet.</p>
-        <?php endif; ?>
-        <?php foreach ($categoryNames as $categoryKey => $existingName): ?>
-            <form method="post" class="filter-form">
-                <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
-                <input type="hidden" name="action" value="rename">
-                <input type="hidden" name="category_id" value="<?= (int) $categoryKey ?>">
-                <div class="field">
-                    <label for="category-<?= (int) $categoryKey ?>">Category name</label>
-                    <input id="category-<?= (int) $categoryKey ?>" name="category_name" maxlength="80"
-                           value="<?= escape($categoryEditId === (int) $categoryKey ? $categoryName : $existingName) ?>" required>
-                </div>
-                <button class="button" type="submit">Save name</button>
-            </form>
-        <?php endforeach; ?>
-    </section>
 <?php elseif ($mode === 'remove'): ?>
     <section class="panel form-panel" aria-labelledby="page-title">
         <h1 id="page-title">Remove equipment</h1>

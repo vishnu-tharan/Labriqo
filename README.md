@@ -150,7 +150,7 @@ Check that rejecting without a reason shows an error, a valid rejection displays
 
 ## Change password
 
-Students open **My profile** and staff open **Dashboard** to find **Change password**. Enter the current password, a new password of at least 15 characters, and the new password again to confirm it. The form supports passwords up to 72 bytes.
+Students open **My profile** and staff also open **My profile** to find **Change password**. Enter the current password, a new password of at least 15 characters, and the new password again to confirm it. The form supports passwords up to 72 bytes.
 
 After saving, use the new password for your next sign-in. If you receive an incorrect-current-password message, check the password you currently use to sign in.
 
@@ -164,7 +164,7 @@ To test, issue loans due today, tomorrow, in three days, and in four days. The f
 
 ## CSV downloads
 
-Staff can choose **Download CSV** on **Equipment** or **Requests**. The download uses the search and filters selected in that form. Choose **All statuses** on Requests to include the full borrowing history. A search with no matching records produces a file containing the column headings.
+Staff can choose **Download CSV** on **Equipment** or **Export CSV** on **Requests**. The download uses the search and filters selected in that form. Choose **All statuses** on Requests to include the full borrowing history. A search with no matching records produces a file containing the column headings.
 
 Inventory exports include quantities and the active/archive flag. Borrowing exports include student details, quantities, reasons, statuses, and dates. User-entered values that could be interpreted as spreadsheet formulas receive a leading apostrophe in the CSV.
 
@@ -172,9 +172,9 @@ To test, filter inventory to one equipment code and download it. Check that only
 
 ## Pagination
 
-Equipment catalogs, inventory, borrowing requests, and active-loan lists show 10 records per page. Use **Previous** and **Next** below the list. Filters carry across pages, and applying a new filter starts at the first page. CSV downloads include all matching records.
+Borrowing requests and active-loan lists show 15 records per page. Equipment catalogs and inventory show 10. Use **Previous** and **Next** below the list. Filters carry across pages, and applying a new filter starts at the first page. CSV downloads include all matching records.
 
-To test, add at least 11 equipment entries or requests in a test database. Check that the second page shows the remaining records. Then apply a filter and check that paging keeps it selected. Download a CSV and confirm that it includes matches from every page.
+To test, add at least 11 equipment entries or 16 requests in a test database. Check that the second page shows the remaining records. Then apply a filter and check that paging keeps it selected. Download a CSV and confirm that it includes matches from every page.
 
 ## Student history filters
 
@@ -305,7 +305,7 @@ To test the workflow, reserve the last available units, add two students to the 
 ## Partial returns, damaged or missing units, and staff activity
 
 - **Partial returns.** In **Returns**, record any quantity up to the outstanding amount. For tagged equipment, enter the exact tags for that batch. The loan stays open for its outstanding units. The borrowing slip shows each recorded outcome.
-- **Damaged or missing units.** Record each outcome as a separate batch. A damaged return goes to the repair hold and stays unavailable for lending. From **Equipment**, open the **held for repair** link to mark units repaired or discard them with a reason. A missing unit reduces total stock and retires its tag, if it has one. A loan closes when every issued unit is accounted for.
+- **Damaged or missing units.** Record each outcome as a separate batch. A damaged return goes to the repair hold and stays unavailable for lending. From **Equipment**, open the **held for inspection or repair** link to restock cleared units or discard them with a reason. A missing unit reduces total stock and retires its tag, if it has one. A loan closes when every issued unit is accounted for.
 - **Staff activity.** Open **Dashboard → Staff activity** to see account decisions, request decisions, pickups, issues, extensions, return outcomes, and damage resolutions. The log starts recording after this update. Quantity adjustments remain available in **Equipment → Stock history**.
 
 ### Upgrade for return outcomes and staff activity
@@ -350,3 +350,15 @@ CREATE TABLE IF NOT EXISTS staff_activity (
     FOREIGN KEY (staff_id) REFERENCES users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
+
+
+## Inspection at return and dashboard alerts
+
+Staff choose **Good**, **Needs inspection**, or **Damaged** when recording a return. Notes are optional for these conditions. **Missing** remains available and requires a reason. Units needing inspection or repair stay out of available stock until staff clear the hold. Borrowing slips show the condition recorded for each batch.
+
+The student dashboard links to overdue loans when a student has any. The staff dashboard shows up to five active equipment types with two or fewer units available, starting with the lowest stock.
+
+For an existing database that already supports partial returns, run this once in the labriqo database in phpMyAdmin. A fresh database import already includes the inspection option.
+
+    ALTER TABLE loan_settlements
+        MODIFY COLUMN outcome ENUM('returned', 'damaged', 'missing', 'inspection') NOT NULL;

@@ -299,7 +299,7 @@ if ($studentId !== '' && !validText($studentId, 30)) {
            AND (? = 'all' OR r.status = ? OR (? = 'extensions' AND r.status = 'borrowed' AND r.extension_status = 'pending'))
          ORDER BY CASE WHEN ? = 'waitlisted' THEN r.id END, r.request_date DESC, r.id DESC"
     );
-    $pagination = paginate($database, $statement, [$studentId, $equipmentFilter, $equipmentFilter, $status, $status, $status, $status], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv');
+    $pagination = paginate($database, $statement, [$studentId, $equipmentFilter, $equipmentFilter, $status, $status, $status, $status], $_SERVER['REQUEST_METHOD'] === 'GET' && queryValue('export') === 'csv', 15);
     $requests = $pagination['records'];
 }
 
@@ -371,7 +371,7 @@ require __DIR__ . '/../includes/header.php';
         </select>
     </div>
     <button class="button" type="submit">Filter</button>
-    <button class="button" type="submit" name="export" value="csv">Download CSV</button>
+    <button class="button" type="submit" name="export" value="csv">Export CSV</button>
 </form>
 
 <?php if ($requests === []): ?>
@@ -386,7 +386,7 @@ require __DIR__ . '/../includes/header.php';
                     <th scope="col">Equipment</th>
                     <th scope="col">Dates</th>
                     <th scope="col">Status</th>
-                    <th scope="col">Action</th>
+                    <th scope="col" class="print-hide">Action</th>
                 </tr>
             </thead>
             <tbody>
@@ -438,7 +438,7 @@ require __DIR__ . '/../includes/header.php';
                                 <p class="request-reason"><?= escape($request['rejection_reason'] ?? 'No reason recorded.') ?></p>
                             <?php endif; ?>
                         </td>
-                        <td>
+                        <td class="print-hide">
                             <?php if (in_array($request['status'], ['pending', 'waitlisted', 'reserved'], true)): ?>
                                 <form method="post" class="loan-action">
                                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">

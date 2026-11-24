@@ -7,7 +7,6 @@ $basePath = '../';
 $pageTitle = 'Dashboard';
 $database = db();
 $errors = [];
-$showPasswordForm = true;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     checkCsrf();
@@ -40,15 +39,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         $errors[] = 'This student account is no longer awaiting approval.';
-    } elseif (formValue('action') === 'change_password') {
-        $errors = changePassword(
-            $user['id'], formValue('current_password'), formValue('new_password'), formValue('confirm_password')
-        );
-
-        if ($errors === []) {
-            $_SESSION['notice'] = 'Password changed.';
-            redirect('dashboard.php');
-        }
     } else {
         http_response_code(400);
         exit('Choose a valid account action.');
@@ -58,7 +48,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if (queryValue('view') === 'activity') {
     $pageTitle = 'Staff activity';
-    $showPasswordForm = false;
     $statement = $database->prepare(
         'SELECT a.id, a.action_name, a.target_type, a.target_id, a.detail, a.recorded_at, u.name AS staff_name
          FROM staff_activity a JOIN users u ON u.id = a.staff_id ORDER BY a.id DESC'
@@ -121,12 +110,18 @@ $lending = $database->query(
 )->fetch();
 
 $summary = [
-    'Active equipment types' => $inventory['equipment_types'],
-    'Total equipment units' => $inventory['total_units'],
-    'Borrowed units' => $lending['borrowed_units'],
-    'Pending requests' => $lending['pending_requests'],
-    'Overdue loans' => $lending['overdue_loans'],
+    'Active equipment types' => [$inventory['equipment_types'], 'equipment.php?active=1'],
+    'Total equipment units' => [$inventory['total_units'], 'equipment.php?active=1'],
+    'Borrowed units' => [$lending['borrowed_units'], 'returns.php'],
+    'Pending requests' => [$lending['pending_requests'], 'requests.php?status=pending'],
+    'Overdue loans' => [$lending['overdue_loans'], 'returns.php?view=overdue'],
 ];
+
+$lowStock = $database->query(
+    'SELECT id, equipment_code, name, available_quantity FROM equipment
+     WHERE is_active = 1 AND available_quantity <= 2
+     ORDER BY available_quantity, name, id LIMIT 5'
+)->fetchAll();
 
 $recentReturns = $database->query(
     "SELECT r.id, r.quantity, r.return_date, u.name AS student_name, u.student_id,
@@ -153,14 +148,42 @@ require __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
-<dl class="dashboard-stats" aria-label="Inventory and lending summary">
-    <?php foreach ($summary as $label => $value): ?>
-        <div class="stat-card">
-            <dt><?= escape($label) ?></dt>
-            <dd><?= number_format((int) $value) ?></dd>
-        </div>
+<div class="dashboard-stats" role="group" aria-label="Inventory and lending summary">
+    <?php foreach ($summary as $label => [$value, $url]): ?>
+        <a class="stat-card<?= $label === 'Overdue loans' && (int) $value > 0 ? ' stat-card-overdue' : '' ?>"
+           href="<?= escape($url) ?>">
+            <span class="stat-label"><?= escape($label) ?></span>
+            <strong class="stat-value"><?= number_format((int) $value) ?></strong>
+        </a>
     <?php endforeach; ?>
-</dl>
+</div>
+
+<section class="dashboard-heading" aria-labelledby="low-stock-title">
+    <div class="page-actions dashboard-section-heading">
+        <h2 id="low-stock-title">Low stock</h2>
+        <a href="equipment.php?active=1">View active inventory</a>
+    </div>
+    <?php if ($lowStock === []): ?>
+        <p class="panel dashboard-empty">All active equipment has more than two units available.</p>
+    <?php else: ?>
+        <div class="table-scroll dashboard-table" tabindex="0" role="region" aria-labelledby="low-stock-title">
+            <table>
+                <thead><tr><th scope="col">Equipment</th><th scope="col">Code</th><th scope="col">Available units</th></tr></thead>
+                <tbody>
+                    <?php foreach ($lowStock as $item): ?>
+                        <tr>
+                            <th scope="row">
+                                <a href="equipment.php?mode=edit&amp;id=<?= (int) $item['id'] ?>"><?= escape($item['name']) ?></a>
+                            </th>
+                            <td><?= escape($item['equipment_code']) ?></td>
+                            <td><?= (int) $item['available_quantity'] ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</section>
 
 <section id="student-approvals" class="panel dashboard-heading" aria-labelledby="approval-title">
     <h2 id="approval-title">Student account approvals</h2>

@@ -147,6 +147,7 @@ if ($detailView) {
     $categories = $database->query('SELECT id, name FROM categories ORDER BY name')->fetchAll();
     $search = trim(queryValue('q'));
     $categoryId = filter_var(queryValue('category'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    $availableOnly = queryValue('available') === '1';
     $equipment = [];
 
     if ($search !== '' && !validText($search, 120)) {
@@ -159,9 +160,10 @@ if ($detailView) {
              WHERE e.is_active = 1
                AND (LOCATE(?, e.name) > 0 OR LOCATE(?, e.equipment_code) > 0)
                AND (? IS NULL OR e.category_id = ?)
+               AND (? = 0 OR (e.available_quantity > 0 AND e.is_under_maintenance = 0))
              ORDER BY e.name, e.equipment_code'
         );
-        $pagination = paginate($database, $statement, [$search, $search, $categoryFilter, $categoryFilter]);
+        $pagination = paginate($database, $statement, [$search, $search, $categoryFilter, $categoryFilter, (int) $availableOnly]);
         $equipment = $pagination['records'];
     }
 }
@@ -182,7 +184,14 @@ require __DIR__ . '/../includes/header.php';
                 <img class="equipment-image" src="../<?= escape($item['image_url']) ?>"
                      alt="<?= escape($item['name']) ?>" referrerpolicy="no-referrer">
             <?php else: ?>
-                <div class="equipment-image image-placeholder">No image available</div>
+                <div class="equipment-image image-placeholder">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                        <rect x="3" y="3" width="18" height="14" rx="2"/>
+                        <path d="M3 10h4l2-3 3 6 2-3h7M8 21h8m-4-4v4"/>
+                    </svg>
+                    <span>No image available</span>
+                </div>
             <?php endif; ?>
             <div>
                 <p class="item-meta"><?= escape($item['category_name']) ?> · <?= escape($item['equipment_code']) ?></p>
@@ -263,8 +272,12 @@ require __DIR__ . '/../includes/header.php';
                 <?php endforeach; ?>
             </select>
         </div>
+        <label class="filter-checkbox">
+            <input type="checkbox" name="available" value="1" <?= $availableOnly ? 'checked' : '' ?>>
+            Available only
+        </label>
         <button class="button" type="submit">Search</button>
-        <?php if ($search !== '' || $categoryId !== false): ?>
+        <?php if ($search !== '' || $categoryId !== false || $availableOnly): ?>
             <a class="filter-reset" href="equipment.php">Clear filters</a>
         <?php endif; ?>
     </form>
@@ -280,11 +293,18 @@ require __DIR__ . '/../includes/header.php';
                     <img class="equipment-image" src="../<?= escape($item['image_url']) ?>"
                          alt="<?= escape($item['name']) ?>" loading="lazy" referrerpolicy="no-referrer">
                 <?php else: ?>
-                    <div class="equipment-image image-placeholder">No image available</div>
+                    <div class="equipment-image image-placeholder">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                            <rect x="3" y="3" width="18" height="14" rx="2"/>
+                            <path d="M3 10h4l2-3 3 6 2-3h7M8 21h8m-4-4v4"/>
+                        </svg>
+                        <span>No image available</span>
+                    </div>
                 <?php endif; ?>
                 <div class="equipment-card-body">
                     <p class="item-meta"><?= escape($item['category_name']) ?> · <?= escape($item['equipment_code']) ?></p>
-                    <h2><a href="equipment.php?id=<?= (int) $item['id'] ?>"><?= escape($item['name']) ?></a></h2>
+                    <h2><?= escape($item['name']) ?></h2>
                     <p class="equipment-summary"><?= escape($item['description']) ?></p>
                     <div class="item-availability">
                         <?php if ($item['is_under_maintenance']): ?>
@@ -296,6 +316,9 @@ require __DIR__ . '/../includes/header.php';
                         <?php endif; ?>
                         <span><?= (int) $item['available_quantity'] ?> of <?= (int) $item['total_quantity'] ?> units</span>
                     </div>
+                    <?php $actionLabel = !$item['is_under_maintenance'] && $item['total_quantity'] > 0 ? 'View & Request' : 'View details'; ?>
+                    <a class="button equipment-card-action" href="equipment.php?id=<?= (int) $item['id'] ?>"
+                       aria-label="<?= escape($actionLabel . ' — ' . $item['name']) ?>"><?= escape($actionLabel) ?></a>
                 </div>
             </article>
         <?php endforeach; ?>

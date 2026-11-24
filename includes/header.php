@@ -20,7 +20,12 @@ unset($_SESSION['notice']);
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
     <div class="container header-row">
-        <a class="brand" href="<?= $basePath ?>index.php">Labriqo</a>
+        <div class="header-brand">
+            <a class="brand" href="<?= $basePath ?>index.php">Labriqo</a>
+            <?php if ($user !== null): ?>
+                <span class="role-badge"><?= $user['role'] === 'staff' ? 'Staff' : 'Student' ?></span>
+            <?php endif; ?>
+        </div>
         <nav aria-label="Main navigation">
             <?php if ($user === null): ?>
                 <a href="login.php" <?= $pageTitle === 'Sign in' ? 'aria-current="page"' : '' ?>>Sign in</a>
@@ -34,6 +39,7 @@ unset($_SESSION['notice']);
                 <?php else: ?>
                     <a href="<?= $basePath ?>staff/requests.php" <?= $pageTitle === 'Borrowing requests' ? 'aria-current="page"' : '' ?>>Requests</a>
                     <a href="<?= $basePath ?>staff/returns.php" <?= $pageTitle === 'Returns' ? 'aria-current="page"' : '' ?>>Returns</a>
+                    <a href="<?= $basePath ?>staff/profile.php" <?= $pageTitle === 'My profile' ? 'aria-current="page"' : '' ?>>My profile</a>
                 <?php endif; ?>
                 <form action="<?= $basePath ?>logout.php" method="post">
                     <input type="hidden" name="csrf_token" value="<?= escape(csrfToken()) ?>">
