@@ -6,6 +6,82 @@ Borrow Smart. Return on Time.
 
 Labriqo replaces a university laboratory's paper borrowing register. Students can find equipment, check stock, and request a loan. Staff manage the inventory, issue equipment, confirm returns, and track overdue loans.
 
+## Screenshots
+
+These screenshots use fictional student and staff accounts in a University of Vavuniya lab demo.
+
+### Sign in
+
+Students and staff use the same sign-in page.
+
+![Labriqo sign-in page](screenshots/01-sign-in.png)
+
+<details>
+<summary>Student screens</summary>
+
+**Registration** — Students enter their details and wait for staff approval.
+
+![Student registration form](screenshots/02-student-registration.png)
+
+**Dashboard** — Students see their requests, active loans, and overdue alerts.
+
+![Vishnu's student dashboard with an overdue alert](screenshots/03-student-dashboard.png)
+
+**My profile** — Students can update their details and change their password.
+
+![Vishnu's student profile and password form](screenshots/04-student-profile.png)
+
+**My requests** — Students can check request status and read rejection reasons.
+
+![Vishnu's request history with a rejection reason](screenshots/05-student-request-history.png)
+
+**Equipment catalog** — Students can search and filter equipment by category or availability.
+
+![Equipment catalog with search and availability filters](screenshots/06-equipment-catalog.png)
+
+**Borrow request** — Thaksi enters a quantity, a date, and a reason to borrow a digital multimeter.
+
+![Thaksi's digital multimeter request form](screenshots/07-borrow-request-form.png)
+
+</details>
+
+<details>
+<summary>Staff screens</summary>
+
+**Dashboard** — Staff can see overdue loans, low stock, and student accounts awaiting approval.
+
+![Staff dashboard with low stock and account approvals](screenshots/08-staff-dashboard.png)
+
+**Inventory** — Staff can check stock and manage equipment.
+
+![Staff equipment inventory with stock counts](screenshots/09-equipment-inventory.png)
+
+**Categories** — Staff can add and rename equipment categories.
+
+![Staff category management page](screenshots/10-staff-categories.png)
+
+**Pending requests** — Staff can see requests from Tharan and Thaksi in the same queue.
+
+![Pending borrowing requests from Tharan and Thaksi](screenshots/11-staff-pending-requests.png)
+
+**Request review** — Staff can set a due date, issue equipment, or reject the request with a reason. They can also export filtered requests to CSV.
+
+![Staff review of Thaksi's multimeter request](screenshots/12-staff-request-review.png)
+
+**Return condition** — Staff mark Thaksi's multimeter as needing inspection and add a short note.
+
+![Return form with Needs inspection selected](screenshots/13-return-condition-check.png)
+
+**Borrowing slip** — The slip shows the issue details and the recorded return condition.
+
+![Borrowing slip showing the multimeter return and inspection note](screenshots/14-borrowing-and-return-slip.png)
+
+**My profile** — Staff can view their account details and change their password.
+
+![Staff profile and password form](screenshots/15-staff-profile.png)
+
+</details>
+
 ## Run with XAMPP on Windows
 
 Use XAMPP with Apache, PHP 8, and the `pdo_mysql` and `mbstring` extensions. XAMPP's **MySQL** service runs MariaDB. If you use standalone MySQL, use 8.0.16 or later so it enforces the stock constraints.
