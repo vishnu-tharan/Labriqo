@@ -6,6 +6,8 @@ Borrow Smart. Return on Time.
 
 Labriqo replaces a university laboratory's paper borrowing register. Students can find equipment, check stock, and request a loan. Staff manage the inventory, issue equipment, confirm returns, and track overdue loans.
 
+**Live demo** · [Open Labriqo](https://labriqo.freepage.cc)
+
 ## Screenshots
 
 These screenshots use fictional student and staff accounts in a University of Vavuniya lab demo.
